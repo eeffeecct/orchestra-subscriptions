@@ -1,0 +1,70 @@
+# Добавляем таблицу referrals — реферальная программа.
+#
+# Каждая строка = связь "приглашённый (B) пришёл по ссылке приглашающего (A)".
+# referred_telegram_id UNIQUE — у каждого юзера может быть максимум один реферер
+# (first-come-first-serve). paid_at NULL пока B не совершил первую SUCCEEDED-оплату.
+#
+# На production БД таблица новая — preCondition не нужен. На dev/CI Hibernate
+# уже прогонит changeset до validate-phase, так что всё чисто.
+databaseChangeLog:
+  - changeSet:
+      id: 003-add-referrals-table
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: referrals
+      changes:
+        - createTable:
+            tableName: referrals
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: version
+                  type: BIGINT
+              - column:
+                  name: referrer_telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              # UNIQUE: у каждого юзера может быть максимум один реферер.
+              - column:
+                  name: referred_telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+                    unique: true
+              - column:
+                  name: referred_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              # NULL до первой SUCCEEDED-оплаты приглашённого. Обновление этого поля —
+              # сигнал "награды начислены", используется как idempotency-маркер через
+              # conditional UPDATE (см. ReferralService.maybeAwardReferral).
+              - column:
+                  name: paid_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: reward_bonus_days
+                  type: INTEGER
+              - column:
+                  name: referee_bonus_days
+                  type: INTEGER
+        # Индекс на referrer для быстрых выборок "сколько рефералов у меня" / "сколько
+        # награждённых за последние 30 дней" в /referral и anti-abuse cap.
+        - createIndex:
+            tableName: referrals
+            indexName: idx_referrals_referrer_paid
+            columns:
+              - column:
+                  name: referrer_telegram_id
+              - column:
+                  name: paid_at

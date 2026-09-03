@@ -1,0 +1,52 @@
+# Локальный запуск: база + приложение, собранное из этого репозитория.
+#
+#   cp .env.example .env      # заполнить BOT_TOKEN и пароль базы
+#   docker compose up --build
+#
+# Приложение поднимется на http://localhost:8080 (актуатор: /actuator/health).
+# Только база, без приложения:  docker compose up postgres
+services:
+  postgres:
+    image: postgres:16
+    container_name: subscriptions-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-subscriptions}
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASS:-changeme}
+    ports:
+      # Только loopback: без адреса Docker вешает порт на 0.0.0.0 и пробивает дырку
+      # в firewall — локальная база оказывается видна из сети.
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-app} -d ${DB_NAME:-subscriptions}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: subscriptions-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Профиль nobot: приложение поднимается целиком, но не регистрирует бота в
+      # Telegram — иначе плейсхолдер вместо токена роняет старт с 401. Появился
+      # настоящий токен — очистите переменную: SPRING_PROFILES_ACTIVE=
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE-nobot}
+      # Внутри compose-сети база доступна по имени сервиса и штатному порту 5432 —
+      # проброс 5434 наружу к этому отношения не имеет.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-subscriptions}
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:-app}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASS:-changeme}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

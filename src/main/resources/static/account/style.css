@@ -1,0 +1,757 @@
+/*
+ * Web-личный-кабинет Orchestra. Палитра + matrix-rain фон —
+ * синхронизированы с Mini App (см. src/main/resources/static/app/style.css).
+ * Кабинет визуально одинаков с Mini App, чтобы юзер не чувствовал что
+ * попал на «другой» сайт.
+ */
+/* ===== Глобальный hidden — без этого ниже display:flex/grid перебивает
+   user-agent default <element hidden>{display:none}, и элементы с
+   атрибутом hidden становятся видны (баг с paid-banner с дефолтными «—»). */
+[hidden] { display: none !important; }
+:root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --card-border: #30363d;
+    /* Осветлённая рамка для интерактивных элементов (кнопка входа, hover промо-кнопки).
+       В Mini App два тона называются --card-border/--card-border-strong; здесь базовый тон
+       уже равен «strong» из Mini App, поэтому акцентный на ступень светлее. */
+    --card-border-strong: #444c56;
+    --accent: #3fb950;
+    --accent-soft: #7ec896;
+    --text: #e6edf3;
+    --text-mute: #8b949e;
+    --text-dim: #6e7681;
+    --danger: #ff8a80;
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;  /* matrix-rain колонки могут выходить за viewport */
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ===== Matrix-rain (синхрон с Mini App) =====
+   Колонки буков «O R C H E S T R A · ...» падают сверху вниз.
+   z-index:0 + pointer-events:none — под всем контентом, не ловит клики.
+   spawnRainColumns() в bg.js спавнит .rain-col children.
+*/
+.bg-dvd {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+}
+.rain-col {
+    position: absolute;
+    top: -20%;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--accent-soft);
+    writing-mode: vertical-rl;
+    letter-spacing: .3em;
+    white-space: nowrap;
+    line-height: 1;
+    will-change: transform;
+    animation: rain-fall linear infinite;
+}
+@keyframes rain-fall {
+    from { transform: translateY(-100%); }
+    to   { transform: translateY(220vh); }
+}
+/* Виньетка по краям — чтобы колонки не «обрезались» резко на верху/низу */
+.bg-dvd::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, var(--bg) 0%, transparent 6%, transparent 94%, var(--bg) 100%);
+    pointer-events: none;
+}
+
+.account {
+    position: relative;
+    z-index: 2;  /* поверх .bg-dvd */
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 24px 20px 48px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.account-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--card-border);
+}
+.brand {
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 13px;
+    color: var(--accent-soft);
+}
+.brand b {
+    color: var(--text);
+    font-weight: 700;
+    margin-left: 4px;
+}
+
+.link-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-mute);
+    font-family: var(--font-body);
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+.link-btn:hover { color: var(--text); }
+
+.loading {
+    padding: 48px 0;
+    text-align: center;
+    color: var(--text-mute);
+}
+
+.content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+}
+.card-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-mute);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.card-value {
+    font-size: 15px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    word-break: break-all;
+}
+.card-value-big {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+}
+.card-sub {
+    font-size: 13px;
+    color: var(--text-mute);
+    line-height: 1.5;
+    margin-bottom: 8px;
+}
+
+/* LED-индикатор статуса подписки, аналог Mini App */
+.led {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+}
+.led.is-active { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.led.is-expired { background: var(--danger); }
+
+.status-card .card-value-big { color: var(--accent); }
+.status-card.is-expired .card-value-big { color: var(--danger); }
+
+.sub-card { padding-bottom: 18px; }
+.sub-value {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    margin: 8px 0 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-soft);
+    word-break: break-all;
+    max-height: 96px;
+    overflow-y: auto;
+}
+
+.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    background: var(--accent);
+    color: #0d1117;
+    border: none;
+    padding: 12px 18px;
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    transition: filter .15s, transform .12s;
+}
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-primary:active { transform: scale(.985); }
+.btn-primary[disabled] {
+    opacity: .55;
+    cursor: not-allowed;
+}
+.btn-primary[disabled]:active { transform: none; }
+
+.btn-primary.is-copied { background: var(--accent-soft); }
+
+/* is-busy — shimmer-эффект для loading-state, аналог Mini App.
+   Применяется к btn-primary и btn-secondary одинаково. */
+.btn-primary.is-busy,
+.btn-secondary.is-busy {
+    opacity: 1;
+    position: relative;
+    overflow: hidden;
+}
+.btn-primary.is-busy::after,
+.btn-secondary.is-busy::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 255, 255, .15) 50%,
+        transparent 100%
+    );
+    animation: btn-shimmer 1.2s linear infinite;
+    pointer-events: none;
+}
+@keyframes btn-shimmer {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(100%); }
+}
+
+/* Форма логина: input + label + result-сообщение */
+.login-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-mute);
+    margin: 16px 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.login-input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--card-border);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    /* 16px — минимум при котором iOS Safari НЕ зумит viewport при focus.
+       Меньше — Safari «подъезжает» к полю с автозумом, что бесит. */
+    font-size: 16px;
+    margin-bottom: 12px;
+    transition: border-color .15s;
+}
+.login-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.login-input[readonly] {
+    opacity: .65;
+    cursor: not-allowed;
+}
+.login-input::placeholder { color: var(--text-dim); }
+
+.login-result {
+    margin: 0 0 12px;
+    font-size: 13px;
+    line-height: 1.4;
+}
+.login-result--ok { color: var(--accent); }
+.login-result--err { color: var(--danger); }
+.login-result--info { color: var(--text-mute); }
+
+.hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    text-align: center;
+}
+.hint a {
+    color: var(--accent-soft);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.error-card { border-color: rgba(255, 138, 128, 0.3); }
+.error-card .card-value-big { color: var(--danger); }
+
+/* ========== Покупка/оплата в ЛК ========== */
+
+/*
+  Возвратный баннер из YooKassa — три варианта, цвет ставит JS через классы:
+   - success → зелёный (оплата прошла, есть payment.SUCCEEDED)
+   - pending → жёлтый/нейтральный (webhook ещё не дошёл, ждём)
+   - failed  → серо-красный (юзер вернулся без оплаты, отказ банка, и т.п.)
+  Дефолтный стиль без модификатора — нейтральный (на случай если JS не успел).
+*/
+.paid-banner {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 4px;
+    font-size: 13px;
+    line-height: 1.4;
+}
+.paid-banner b { font-size: 14px; }
+
+.paid-banner--success {
+    background: rgba(63, 185, 80, 0.12);
+    border-color: var(--accent);
+}
+.paid-banner--success b { color: var(--accent); }
+
+.paid-banner--pending {
+    background: rgba(212, 165, 56, 0.12);
+    border-color: rgba(212, 165, 56, 0.5);
+}
+.paid-banner--pending b { color: #e6c167; }
+
+.paid-banner--failed {
+    background: rgba(255, 138, 128, 0.10);
+    border-color: rgba(255, 138, 128, 0.4);
+}
+.paid-banner--failed b { color: var(--danger); }
+
+/* ========== Onboarding-блок (login/expired) ========== */
+
+.onboarding-card { display: flex; flex-direction: column; gap: 10px; }
+
+.onboarding-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 0 4px;
+    color: var(--text-mute);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.onboarding-divider::before,
+.onboarding-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--card-border);
+}
+
+.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--card-border-strong);
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: border-color .15s, background .15s, transform .12s;
+}
+.btn-secondary:hover { border-color: var(--accent); background: rgba(63, 185, 80, 0.05); }
+.btn-secondary:active { transform: scale(.985); }
+
+.proxy-btn {
+    gap: 12px;
+    padding: 12px 16px;
+    text-align: left;
+    justify-content: flex-start;
+}
+.proxy-flag {
+    font-size: 22px;
+    flex-shrink: 0;
+}
+.proxy-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: left;
+    line-height: 1.3;
+}
+.proxy-text b {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+}
+.proxy-text small {
+    font-size: 11px;
+    color: var(--text-mute);
+}
+
+.onboarding-hint {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
+    text-align: center;
+}
+.onboarding-hint a {
+    color: var(--accent-soft);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.onboarding-hint a:hover { color: var(--accent); }
+
+/* ========== Tutorial-страница (/account/login для новых юзеров) ========== */
+
+/* «Шапка» туториала — крупный заголовок + сабтайтл */
+.welcome-card {
+    text-align: center;
+    padding: 24px 20px;
+}
+.welcome-intro {
+    margin: 4px 0 0;
+    font-size: 14px;
+}
+
+/* Карточка одного шага — нумерованный кружок слева, контент справа */
+.step-card {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+}
+.step-num {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.step-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.step-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.3;
+}
+.step-text {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-mute);
+    line-height: 1.5;
+}
+
+/* Опциональный шаг (1.5 «Если Telegram не открывается») — приглушённый стиль,
+   чтобы выглядел как side-quest, а не блокирующий шаг основной последовательности. */
+.step-card--alt {
+    border-color: rgba(126, 200, 150, 0.15);
+}
+.step-num--alt {
+    background: rgba(126, 200, 150, 0.10);
+    color: var(--accent-soft);
+    font-size: 11px;
+}
+
+/* Финальный «Готово» — зелёная галка вместо цифры */
+.step-num--final {
+    background: var(--accent);
+    color: #0d1117;
+    font-size: 18px;
+}
+
+/* Карточка-совет про email (привязать на будущее) */
+.tip-card {
+    background: rgba(63, 185, 80, 0.06);
+    border-color: rgba(63, 185, 80, 0.25);
+}
+.tip-card .card-label { color: var(--accent-soft); }
+.tip-card__small {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.tip-card a {
+    color: var(--accent-soft);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.tip-card a:hover { color: var(--accent); }
+
+/* Карточка входа существующего юзера — компактная, в самом низу */
+.login-existing-card {
+    background: rgba(255, 255, 255, 0.02);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+.pay-card { display: flex; flex-direction: column; gap: 12px; }
+
+.tariffs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.tariff {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+}
+.tariff:hover { border-color: var(--accent-soft); }
+.tariff.is-selected {
+    border-color: var(--accent);
+    background: rgba(63, 185, 80, 0.08);
+}
+.tariff input[type="radio"] {
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--card-border);
+    border-radius: 50%;
+    margin: 0;
+    position: relative;
+    flex-shrink: 0;
+}
+.tariff.is-selected input[type="radio"] {
+    border-color: var(--accent);
+}
+.tariff.is-selected input[type="radio"]::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    background: var(--accent);
+    border-radius: 50%;
+}
+.tariff__main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.tariff__main b { font-size: 14px; font-weight: 600; }
+.tariff__main small { font-size: 11px; color: var(--text-mute); }
+.tariff__price {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    font-feature-settings: 'tnum';
+}
+
+.pay-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    cursor: pointer;
+}
+.pay-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    flex-shrink: 0;
+}
+.pay-toggle__text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+    line-height: 1.35;
+}
+.pay-toggle__text b { font-weight: 600; }
+.pay-toggle__text small { font-size: 11px; color: var(--text-mute); }
+
+.promo-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.promo-toggle {
+    background: none;
+    border: none;
+    color: var(--accent-soft);
+    text-align: left;
+    padding: 0;
+    font-family: var(--font-body);
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+.promo-toggle:hover { color: var(--accent); }
+.promo-row {
+    display: flex;
+    gap: 8px;
+}
+.promo-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--card-border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    /* 16px — anti-iOS-zoom (см. .login-input). */
+    font-size: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.promo-input:focus { outline: none; border-color: var(--accent); }
+.promo-apply {
+    background: var(--card-border);
+    color: var(--text);
+    border: none;
+    padding: 10px 16px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.promo-apply:hover { background: var(--card-border-strong); }
+.promo-apply[disabled] { opacity: .55; cursor: not-allowed; }
+.promo-result {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+}
+.promo-result.login-result--ok { color: var(--accent); }
+.promo-result.login-result--err { color: var(--danger); }
+
+.pay-btn-price {
+    margin-left: 10px;
+    font-feature-settings: 'tnum';
+}
+.pay-btn-price s {
+    color: rgba(13, 17, 23, 0.55);
+    margin-right: 6px;
+    font-weight: 600;
+}
+
+.pay-hint {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: center;
+    line-height: 1.4;
+}
+
+/* ==========================
+   Мои подписки (только на чтение — переключение живёт в Telegram)
+   ========================== */
+.subs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.subs-item {
+    padding: 10px 12px;
+    border: 1px solid var(--card-border, #1f2530);
+    border-radius: 10px;
+    background: var(--bg, #0d1117);
+}
+/* Работающая подписка подсвечена полосой: главный вопрос к списку —
+   «какая из них сейчас рабочая», и отвечать на него должна вёрстка, а не текст. */
+.subs-item--current { box-shadow: inset 3px 0 0 var(--accent, #3fb950); }
+
+.subs-item__title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text, #e6edf3);
+}
+.subs-item__state {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-mute, #8b949e);
+}
+
+/* Бейджи состояния словами — тот же язык, что в Mini App: «Действует сейчас»,
+   «Заморожена», «Продлевается автоматически». */
+.subs-item__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 5px;
+}
+.subs-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 4px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--card-border);
+    color: var(--text-mute);
+    white-space: nowrap;
+}
+.subs-badge--live {
+    border-color: var(--accent, #3fb950);
+    color: var(--accent, #3fb950);
+}
+.subs-badge--dead {
+    border-color: var(--danger, #ff8a80);
+    color: var(--danger, #ff8a80);
+}
+
+.subs-note {
+    margin-top: 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-dim, #6e7681);
+}

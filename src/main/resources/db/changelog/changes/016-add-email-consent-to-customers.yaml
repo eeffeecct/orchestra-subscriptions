@@ -1,0 +1,29 @@
+# 152-ФЗ: фиксируем факт согласия юзера на обработку ПДн (email).
+#
+# Без этой колонки нет audit-trail: «где доказательство, что юзер согласился?». По 152-ФЗ
+# хранить отдельную запись о согласии не обязательно (само наличие email после явного opt-in
+# действия эквивалентно), но колонка с timestamp снимает риск споров и стоит копейки.
+#
+# Когда ставится: при POST /api/me/email с consent=true, если ещё не стоит — выставляем
+# now(). При смене email на новый — обновляем (юзер согласился ещё раз через тот же чекбокс).
+# При DELETE /api/me/email — обнуляем вместе с email и email_verified_at: отзыв согласия
+# по 152-ФЗ должен также удалить артефакты обработки.
+#
+# Идемпотентность через NOT columnExists.
+databaseChangeLog:
+  - changeSet:
+      id: 016-add-email-consent-to-customers
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: customers
+                columnName: email_consent_at
+      changes:
+        - addColumn:
+            tableName: customers
+            columns:
+              - column:
+                  name: email_consent_at
+                  type: TIMESTAMP WITHOUT TIME ZONE

@@ -1,0 +1,28 @@
+# Добавляем payments.promo_code_used — нормализованный код промо, привязанный к платежу.
+#
+# Зачем: в первой версии 009-миграции used_count инкрементился сразу при создании
+# PENDING-платежа. Если юзер бросил флоу (закрыл YooKassa-форму), счётчик и слот
+# оставались занятыми, а сам юзер блокировался от повторной попытки тем же кодом
+# (existsByPromoCodeIdAndTelegramIdAndRevertedAtIsNull → already_used).
+#
+# Fix: на этапе создания PENDING только валидируем код и сохраняем его в
+# payment.promo_code_used (для аудита и для применения позже). PromoUsage и
+# инкремент used_count происходят только когда платёж переходит в SUCCEEDED.
+# Если юзер не оплатил — промо никак не учитывается, можно пробовать снова.
+databaseChangeLog:
+  - changeSet:
+      id: 010-add-promo-code-used-to-payment
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: payments
+                columnName: promo_code_used
+      changes:
+        - addColumn:
+            tableName: payments
+            columns:
+              - column:
+                  name: promo_code_used
+                  type: VARCHAR(64)

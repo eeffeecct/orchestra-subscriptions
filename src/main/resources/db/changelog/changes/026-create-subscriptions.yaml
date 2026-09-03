@@ -1,0 +1,265 @@
+# Таблица подписок: фундамент модели «у юзера несколько подписок, активна одна».
+# Полный план — docs/multi-subscription-plan.md.
+#
+# customers остаётся 1:1 с ЧЕЛОВЕКОМ и здесь не меняется по смыслу: попытка держать
+# несколько подписок строками customers сломала бы email UNIQUE, session_version,
+# magic-link и рассылки (одному человеку ушло бы N сообщений).
+#
+# Часы подписки разделены по состоянию: текущая живёт по expires_at, припаркованные —
+# по остатку в секундах. Это не стиль, а защита: ВСЕ существующие запросы по датам
+# (напоминания об истечении, автопродление, winback) физически не видят припаркованные
+# строки, потому что у тех expires_at IS NULL — а не потому, что кто-то не забыл фильтр.
+#
+# ⚠️ enum-колонки только VARCHAR(255): Hibernate для @Enumerated(STRING) валидирует
+# ровно 255, а прод стартует с ddl-auto: validate — VARCHAR(16) уронил бы контейнер.
+# ⚠️ provider_username NULLABLE намеренно: в 001-baseline он тоже nullable, и NOT NULL здесь
+# уронил бы миграцию на проде.
+databaseChangeLog:
+  - changeSet:
+      id: 026-create-subscriptions
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: subscriptions
+      changes:
+        - createTable:
+            tableName: subscriptions
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: version
+                  type: BIGINT
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              # Монотонный номер подписки внутри человека (1, 2, 3…). Берётся из
+              # customers.subscription_seq, а НЕ из count(*): переиспользованный номер
+              # дал бы 409-recovery в AccessProvider.createUser шанс усыновить чужой аккаунт.
+              - column:
+                  name: seq
+                  type: INT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: provider_username
+                  type: VARCHAR(255)
+              - column:
+                  name: subscription_link
+                  type: VARCHAR(500)
+              - column:
+                  name: subscription_token
+                  type: VARCHAR(255)
+              - column:
+                  name: is_current
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              # ACTIVE | DISABLED — ровно значения Customer.Status, чтобы запросы
+              # переезжали один-в-один.
+              - column:
+                  name: state
+                  type: VARCHAR(255)
+              # Только у текущей подписки.
+              - column:
+                  name: expires_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              # Только у припаркованных: замороженный остаток.
+              - column:
+                  name: balance_seconds
+                  type: BIGINT
+              - column:
+                  name: device_limit
+                  type: INT
+              - column:
+                  name: device_tier_id
+                  type: VARCHAR(64)
+              - column:
+                  name: autorenew_enabled
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: autorenew_plan_id
+                  type: VARCHAR(255)
+              - column:
+                  name: autorenew_device_tier_id
+                  type: VARCHAR(64)
+              - column:
+                  name: autorenew_last_failure_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: notified_24h
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: notified_1h
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: winback_sent
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              # TRIAL | PAID | GRANT — откуда подписка взялась. Нужна, чтобы счётчики
+              # триалов не прыгали, когда человек переключается между подписками.
+              - column:
+                  name: origin
+                  type: VARCHAR(255)
+              # Подпись в переключателе бота («Семейная», «Основная»).
+              - column:
+                  name: label
+                  type: VARCHAR(64)
+              # Транзакционный outbox для AccessProvider: намерение записано в той же транзакции,
+              # что и состояние, поэтому падение между БД и панелью не теряется.
+              - column:
+                  name: provider_intent
+                  type: VARCHAR(255)
+              - column:
+                  name: provider_intent_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: provider_attempts
+                  type: INT
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+              - column:
+                  name: provider_synced_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: parked_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: last_activated_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+        - createIndex:
+            tableName: subscriptions
+            indexName: idx_subscriptions_telegram_id
+            columns:
+              - column:
+                  name: telegram_id
+        - createIndex:
+            tableName: subscriptions
+            indexName: idx_subscriptions_token
+            columns:
+              - column:
+                  name: subscription_token
+
+  # Частичные уникальные индексы и CHECK'и — сырым SQL: Liquibase createIndex не умеет WHERE.
+  #
+  # ⚠️ ck_subscriptions_clock НАМЕРЕННО разрешает is_current = true при expires_at IS NULL —
+  # это состояние после полного возврата (applyRefundEffects обнуляет expires_at). Ужесточение
+  # до «дата обязательна у текущей» сломало бы каждый возврат.
+  - changeSet:
+      id: 026-subscriptions-constraints
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - indexExists:
+                indexName: uk_subscriptions_one_current
+      changes:
+        - sql:
+            dbms: postgresql
+            splitStatements: true
+            sql: >-
+              CREATE UNIQUE INDEX uk_subscriptions_one_current
+                ON subscriptions (telegram_id) WHERE is_current;
+              CREATE UNIQUE INDEX uk_subscriptions_provider_username
+                ON subscriptions (provider_username) WHERE provider_username IS NOT NULL;
+              CREATE UNIQUE INDEX uk_subscriptions_token
+                ON subscriptions (subscription_token) WHERE subscription_token IS NOT NULL;
+              CREATE INDEX idx_subscriptions_current_expiry
+                ON subscriptions (expires_at) WHERE is_current;
+              CREATE INDEX idx_subscriptions_provider_intent
+                ON subscriptions (provider_intent_at) WHERE provider_intent IS NOT NULL;
+              ALTER TABLE subscriptions ADD CONSTRAINT ck_subscriptions_clock CHECK (
+                   (is_current     AND balance_seconds IS NULL)
+                OR (NOT is_current AND expires_at IS NULL AND balance_seconds IS NOT NULL));
+              ALTER TABLE subscriptions ADD CONSTRAINT ck_subscriptions_balance CHECK (
+                balance_seconds IS NULL OR balance_seconds >= 0);
+
+  # Ссылки на подписку в смежных таблицах. Пока не заполняются (кроме бэкфилла) — читатели
+  # появятся на следующем этапе, но добавить колонки лучше одной миграцией.
+  - changeSet:
+      id: 026-add-subscription-refs
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: payments
+                columnName: subscription_id
+      changes:
+        - addColumn:
+            tableName: payments
+            columns:
+              # EXTEND — деньги идут в конкретную подписку. NEW — создать новую.
+              # NULL — платёж старше этой правки: резолвится в текущую подписку человека.
+              - column:
+                  name: subscription_id
+                  type: BIGINT
+              - column:
+                  name: target_kind
+                  type: VARCHAR(255)
+        - addColumn:
+            tableName: user_devices
+            columns:
+              - column:
+                  name: subscription_id
+                  type: BIGINT
+        - addColumn:
+            tableName: customers
+            columns:
+              # Аллокатор seq. НИКОГДА не count(*) — см. комментарий к subscriptions.seq.
+              - column:
+                  name: subscription_seq
+                  type: INT
+                  defaultValueNumeric: 1
+              # Явные ворота триала. Сегодня «есть строка в customers» == «триал использован»;
+              # это перестанет работать, как только человек сможет держать несколько подписок
+              # и парковать их все.
+              - column:
+                  name: trial_used_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+        - addColumn:
+            tableName: referrals
+            columns:
+              - column:
+                  name: referee_bonus_subscription_id
+                  type: BIGINT
+              - column:
+                  name: referrer_bonus_subscription_id
+                  type: BIGINT
+        - createIndex:
+            tableName: payments
+            indexName: idx_payments_subscription_id
+            columns:
+              - column:
+                  name: subscription_id
+        - createIndex:
+            tableName: user_devices
+            indexName: idx_user_devices_subscription_id
+            columns:
+              - column:
+                  name: subscription_id

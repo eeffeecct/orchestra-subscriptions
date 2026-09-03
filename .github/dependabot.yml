@@ -1,0 +1,41 @@
+# Dependabot: автоматические PR на обновление зависимостей.
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates
+#
+# Политика: авто-PR только на minor/patch. Мажоры игнорируем (ignore semver-major) —
+# они ломают совместимость (Spring Boot 4, telegrambots 10, Java 25+ base) и делаются
+# осознанно, отдельной задачей, а не авто-бампом. Security-апдейты Dependabot шлёт
+# независимо от этого правила.
+version: 2
+updates:
+  # Java-зависимости (pom.xml). minor+patch группируем в один PR, чтобы не плодить шум.
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions в .github/workflows (checkout, setup-java, docker/*, ssh-action).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Базовые образы Docker (maven build-stage + eclipse-temurin runtime).
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

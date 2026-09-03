@@ -1,0 +1,44 @@
+# Добавляем поля для отката реферальных бонусов при возврате оплаты.
+#
+# Баг: при /refund откатывались только plan.days с подписки приглашённого,
+# а бонусы реферальной программы (+14 дней рефереру, +5 дней приглашённому)
+# оставались — это эксплойт: пригласить себя с другого аккаунта, оплатить,
+# получить +14 рефереру, вернуть деньги, бонус остался.
+#
+# Fix: привязываем Referral к конкретному triggering Payment через payment_id.
+# При refund этого платежа PaymentProcessingService откатывает бонусы обоим
+# и ставит bonus_reverted_at как idempotency-маркер — повторный refund-webhook
+# (дубликат delivery) не начислит отрицательные дни второй раз.
+#
+# Существующие строки referrals (созданные до миграции) остаются с payment_id=NULL —
+# их нельзя привязать к конкретному платежу задним числом, так что для них
+# revert не сработает. Это допустимая деградация: зловредный сценарий требует
+# нового цикла invite → pay → refund, который уже попадёт под новую логику.
+databaseChangeLog:
+  - changeSet:
+      id: 008-add-referral-refund-columns
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: referrals
+                columnName: payment_id
+      changes:
+        - addColumn:
+            tableName: referrals
+            columns:
+              - column:
+                  name: payment_id
+                  type: BIGINT
+              - column:
+                  name: bonus_reverted_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+        # Индекс для быстрого findByPaymentId в applyRefundEffects — без него
+        # каждый refund-webhook делал бы full scan по referrals.
+        - createIndex:
+            tableName: referrals
+            indexName: idx_referrals_payment_id
+            columns:
+              - column:
+                  name: payment_id

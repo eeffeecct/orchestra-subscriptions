@@ -1,0 +1,31 @@
+# Признак «платёж создан планировщиком автопродления» (AutoRenewService), а не рукой юзера.
+#
+# Зачем колонка, а не вывод по косвенным признакам: с этой правкой автосписание перестаёт
+# активировать подписку само и делегирует общий путь PaymentProcessingService.handleSucceeded
+# (row-lock + идемпотентность + чек МойНалог + догон реконсилером). Тому пути надо знать,
+# какой текст слать юзеру: «Оплата получена» для ручной покупки против «Автопродление …
+# управлять: /autorenew» для списания с карты. Отличить одно от другого по provider/plan_id
+# нельзя — у обоих YOOKASSA. Флаг также нужен реконсилеру: он догоняет застрявшую активацию
+# спустя минуты и должен отправить тот же текст, что отправил бы основной путь.
+#
+# Идемпотентность: NOT columnExists (прод-таблица старше Liquibase).
+databaseChangeLog:
+  - changeSet:
+      id: 024-add-autorenew-flag-to-payments
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: payments
+                columnName: autorenew
+      changes:
+        - addColumn:
+            tableName: payments
+            columns:
+              - column:
+                  name: autorenew
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false

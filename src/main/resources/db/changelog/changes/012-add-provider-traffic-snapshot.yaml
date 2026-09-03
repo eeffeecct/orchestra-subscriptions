@@ -1,0 +1,31 @@
+# Колонка provider_traffic_snapshot_bytes на payments — used_traffic AccessProvider-юзера
+# на момент активации этой оплаты. Используется для проверки «не пользовался ни разу»
+# при self-service refund'е через бот.
+#
+# На refund-чеке SubscriptionBot читает текущий used_traffic из AccessProvider и сравнивает с этим
+# снапшотом: если разница > 10 МБ — refund блокируется (юзер уже воспользовался тем,
+# что купил). Снапшот берётся именно после активации, потому что для renewer'ов
+# AccessProvider-счётчик не сбрасывается между подписками — общий accumulated не годится
+# для семантики «не пользовался ТЕМ что только что купил».
+#
+# Nullable: для исторических платежей (до этой миграции) и для случаев когда AccessProvider
+# был недоступен в момент активации. В обоих кейсах refund-eligibility fallback'нется
+# на старое поведение (только 7-дневное окно), чтобы ретроактивно не ужесточать
+# политику для тех, кто платил под старые правила.
+databaseChangeLog:
+  - changeSet:
+      id: 012-add-provider-traffic-snapshot
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: payments
+                columnName: provider_traffic_snapshot_bytes
+      changes:
+        - addColumn:
+            tableName: payments
+            columns:
+              - column:
+                  name: provider_traffic_snapshot_bytes
+                  type: BIGINT

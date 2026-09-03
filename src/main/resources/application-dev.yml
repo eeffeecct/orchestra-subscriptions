@@ -1,0 +1,51 @@
+# ──────────────────────────────────────────────────────────────────────────
+# DEV-профиль: локальный запуск БЕЗ Docker, Postgres и реальных ключей.
+#
+# Запуск (токен ТЕСТОВОГО бота — через переменную окружения, НЕ в файл):
+#   export TEST_BOT_TOKEN='<токен тестового бота>'
+#   export TEST_BOT_USERNAME='<имя_тестового_бота>'
+#   mvn spring-boot:run -Dspring-boot.run.profiles=dev
+#
+# Что делает профиль:
+#   • H2 in-memory вместо Postgres (данные живут, пока запущен процесс);
+#   • Liquibase выключен — схему создаёт Hibernate из @Entity (ddl-auto=create-drop);
+#   • эквайринг и крипто-платежи — заглушки: на старте к ним не ходим, реальные вызовы
+#     идут только при оплате, которую в dev не проверяют;
+#   • токен берётся из TEST_BOT_TOKEN и НИКАК не связан с боевым BOT_TOKEN из .env,
+#     поэтому случайно запустить боевого бота локально нельзя.
+#
+# app.emoji.enabled здесь false → видны обычные эмодзи (как у непремиум-подписчиков).
+# ──────────────────────────────────────────────────────────────────────────
+spring:
+  datasource:
+    url: jdbc:h2:mem:devdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+  liquibase:
+    enabled: false
+
+app:
+  telegram:
+    # Токен/имя ТЕСТОВОГО бота — из окружения. Без TEST_BOT_TOKEN приложение не стартует
+    # (так и задумано: лучше упасть, чем молча подхватить боевой токен из .env).
+    bot-token: ${TEST_BOT_TOKEN}
+    bot-username: ${TEST_BOT_USERNAME:testbot}
+    # Свой Telegram-id, чтобы проверять админ-команды. Пусто — админка выключена.
+    owner-id: ${TEST_OWNER_ID:}
+  provider:
+    base-url: http://localhost:9
+    subscription-url-prefix: http://localhost:8080
+    username: dev
+    password: dev
+  yookassa:
+    shop-id: dev
+    secret-key: dev
+    return-url: https://t.me/testbot
+    recurrent-enabled: false
+  emoji:
+    enabled: ${EMOJI_ENABLED:false}

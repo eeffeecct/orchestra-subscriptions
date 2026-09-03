@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchestra — Как подключиться</title>
+    <meta name="robots" content="noindex,nofollow">
+    <!-- Шрифты лежат у нас, а не на fonts.googleapis.com: иначе браузер каждого клиента
+         сам отдаёт Google свой IP и User-Agent, и Google приходится указывать в Политике
+         получателем данных. Плюс внешний домен бывает недоступен из российских сетей.
+         Путь под /app/ — единственный проксируемый фронтом, см. fonts.css. -->
+    <link rel="stylesheet" href="/app/fonts/fonts.css">
+    <link rel="stylesheet" href="style.css?v=12">
+</head>
+<body>
+    <!-- Matrix-rain бэкграунд (см. account/index.html) -->
+    <div class="bg-dvd" id="bg-dvd" aria-hidden="true"></div>
+
+    <main class="account">
+        <header class="account-header">
+            <div class="brand"><b>Orchestra</b></div>
+        </header>
+
+        <section class="content">
+            <!--
+              Главная страница для новых юзеров — пошаговая инструкция.
+              Решение продукта: TG-first, email — backup. Сначала юзер
+              регистрируется в Telegram-боте, потом опционально привязывает
+              email для восстановления доступа.
+              Форма входа существующих юзеров — внизу, компактно.
+            -->
+            <div class="card welcome-card">
+                <div class="card-value-big">Как подключить доступ</div>
+                <p class="card-sub welcome-intro">
+                    Всё работает через наш Telegram-бот. Пять шагов — и интернет без блокировок.
+                </p>
+            </div>
+
+            <!-- Шаг 1: открыть бот -->
+            <div class="card step-card">
+                <div class="step-num">1</div>
+                <div class="step-body">
+                    <h3 class="step-title">Откройте бот в Telegram</h3>
+                    <p class="step-text">Пробный период выдаётся автоматически, бот проведёт через настройку.</p>
+                    <a class="btn-primary" href="https://t.me/your_bot" target="_blank" rel="noopener">
+                        Открыть бот
+                    </a>
+                </div>
+            </div>
+
+            <!-- Шаг 2: триал -->
+            <div class="card step-card">
+                <div class="step-num">2</div>
+                <div class="step-body">
+                    <h3 class="step-title">Нажмите «Start» — 7 дней бесплатно</h3>
+                    <p class="step-text">Пробный период выдаётся автоматически при первом входе. Карта и личные данные не требуются.</p>
+                </div>
+            </div>
+
+            <!-- Шаг 3: клиентское приложение -->
+            <div class="card step-card">
+                <div class="step-num">3</div>
+                <div class="step-body">
+                    <h3 class="step-title">Установите клиентское приложение</h3>
+                    <p class="step-text">Бесплатное приложение для iPhone, Android, Windows и Mac. Кнопки скачивания — в боте.</p>
+                </div>
+            </div>
+
+            <!-- Шаг 4: подписка -->
+            <div class="card step-card">
+                <div class="step-num">4</div>
+                <div class="step-body">
+                    <h3 class="step-title">Скопируйте ссылку подписки и вставьте в приложение</h3>
+                    <p class="step-text">Бот покажет ссылку с кнопкой «Скопировать». В приложении нажмите «+» и вставьте её — настройка выполнится автоматически.</p>
+                </div>
+            </div>
+
+            <!-- Шаг 5: готово -->
+            <div class="card step-card step-card--final">
+                <div class="step-num step-num--final">✓</div>
+                <div class="step-body">
+                    <h3 class="step-title">Готово</h3>
+                    <p class="step-text">Приложение подключится само. Подписка действует на всех Ваших устройствах в пределах лимита тарифа.</p>
+                </div>
+            </div>
+
+            <!-- Совет: привязать email на будущее -->
+            <div class="card tip-card">
+                <div class="card-label">Рекомендация</div>
+                <p class="card-sub">
+                    После регистрации в Mini App откройте <b>Профиль → Email</b> и укажите свой адрес. Он нужен для одного сценария: при потере доступа к Telegram Вы сможете войти в этот кабинет по email и получить ссылку подписки.
+                </p>
+                <p class="card-sub tip-card__small">
+                    Рассылки на email не отправляются — это закреплено в <a href="https://example.com/offer" target="_blank" rel="noopener">оферте</a>.
+                </p>
+            </div>
+
+            <!-- Существующий юзер — вход через email. Компактно, в самом низу. -->
+            <div class="card login-existing-card">
+                <div class="card-label">Уже пользуетесь Orchestra?</div>
+                <p class="card-sub">
+                    Если ранее вы привязали email и потеряли доступ к Telegram — введите адрес. Пришлём ссылку для входа в кабинет (действует 15 минут).
+                </p>
+                <!-- Ссылку из письма можно открыть где угодно, но вход в чужом браузере
+                     завершается кнопкой на отдельной странице (см. AccountController.confirmAuth).
+                     Предупреждаем заранее — иначе этот шаг выглядит сбоем. -->
+                <p class="card-sub">
+                    Ссылку лучше открыть в этом же браузере. В другом браузере или на другом устройстве вход придётся подтвердить кнопкой — так ссылка не сработает за Вас, если письмо попадёт не туда.
+                </p>
+
+                <form id="login-form" novalidate>
+                    <label class="login-label" for="login-email">Email из Вашего профиля</label>
+                    <input type="email" class="login-input" id="login-email"
+                           placeholder="you@example.com" autocomplete="email"
+                           autocapitalize="none" spellcheck="false" inputmode="email" required>
+                    <p class="login-result" id="login-result" hidden></p>
+                    <button type="submit" class="btn-secondary" id="login-submit-btn">
+                        <span id="login-submit-label">Получить ссылку для входа</span>
+                    </button>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <script src="bg.js?v=1"></script>
+    <script src="login.js?v=2"></script>
+</body>
+</html>

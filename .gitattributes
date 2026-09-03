@@ -1,0 +1,9 @@
+# Maven wrapper: mvnw — POSIX-sh скрипт, ДОЛЖЕН быть с LF, иначе на Linux/CI падает
+# с "bad interpreter: /bin/sh^M". mvnw.cmd — батник Windows, ему нужен CRLF.
+mvnw       text eol=lf
+*.cmd      text eol=crlf
+*.sh       text eol=lf
+# Шрифты бинарные. Полагаться на эвристику git'а здесь не стоит: одна случайная конвертация
+# переводов строк молча портит woff2, и увидит это не CI, а посетитель — квадратами вместо текста.
+*.woff2    binary
+*.woff     binary

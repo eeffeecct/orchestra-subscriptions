@@ -1,0 +1,130 @@
+# Baseline — создание таблиц payments и customers.
+#
+# На production БД (где Hibernate уже создал эти таблицы через ddl-auto=update)
+# весь этот changeset помечается MARK_RAN благодаря preCondition "таблица не существует".
+# На чистой БД (dev/CI) — changeset создаёт схему с нуля, без проблемного
+# check constraint на payments.provider (это делает 002).
+#
+# Если захочется в будущем дропнуть и пересоздать БД на prod — этот же changelog отработает
+# корректно на пустой БД.
+databaseChangeLog:
+  - changeSet:
+      id: 001-baseline-schema
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: payments
+      changes:
+        - createTable:
+            tableName: payments
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: version
+                  type: BIGINT
+              - column:
+                  name: yookassa_payment_id
+                  type: VARCHAR(255)
+                  constraints:
+                    unique: true
+              - column:
+                  name: crypto_invoice_id
+                  type: VARCHAR(255)
+                  constraints:
+                    unique: true
+              - column:
+                  name: telegram_charge_id
+                  type: VARCHAR(255)
+                  constraints:
+                    unique: true
+              # Provider-колонка БЕЗ check constraint — валидация enum-значений
+              # делается на уровне JPA (@Enumerated(EnumType.STRING)).
+              # Размер 255 совпадает с тем, что Hibernate создаёт по умолчанию для
+              # @Enumerated(EnumType.STRING) — важно для ddl-auto=validate на fresh DB.
+              - column:
+                  name: provider
+                  type: VARCHAR(255)
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: telegram_username
+                  type: VARCHAR(255)
+              - column:
+                  name: plan_id
+                  type: VARCHAR(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: amount_kopeks
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: status
+                  type: VARCHAR(255)
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: paid_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+
+        - createTable:
+            tableName: customers
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+                    unique: true
+              - column:
+                  name: telegram_username
+                  type: VARCHAR(255)
+              - column:
+                  name: provider_username
+                  type: VARCHAR(255)
+                  constraints:
+                    unique: true
+              - column:
+                  name: subscription_link
+                  type: VARCHAR(500)
+              - column:
+                  name: status
+                  type: VARCHAR(255)
+              - column:
+                  name: expires_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: notified_24h
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: notified_1h
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false

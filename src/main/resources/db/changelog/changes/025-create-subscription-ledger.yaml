@@ -1,0 +1,84 @@
+# Журнал изменений оплаченного времени: одна append-only строка на каждое событие,
+# двигавшее срок подписки (покупка, автопродление, бонус, грант, возврат, истечение).
+#
+# Зачем: сейчас ответ на «куда делись мои дни» приходится собирать по логам, которые
+# ротируются. Журнал даёт прямой ответ — что, когда и на сколько подвинуло срок и каким
+# платежом это вызвано. Плюс это база сравнения: он доказывает, что система не теряет дни,
+# и любые будущие правки сроков проверяются относительно неё.
+#
+# Время в СЕКУНДАХ, а не в днях: целые сутки уже дважды стоили оплаченного времени
+# (см. SubscriptionTime).
+#
+# subscription_id заведена заранее и пока всегда NULL — подписка у юзера одна. Колонка нужна,
+# чтобы при появлении нескольких подписок не мигрировать уже накопленную историю.
+#
+# Без FK на customers — конвенция репозитория (referrals, magic_links, user_devices тоже
+# держат «голый» telegram_id): журнал обязан пережить удаление юзера.
+#
+# ⚠️ kind — VARCHAR(255), а не VARCHAR(16): Hibernate для @Enumerated(EnumType.STRING)
+# по умолчанию валидирует ровно 255, а прод стартует с ddl-auto: validate — более короткая
+# колонка уронила бы приложение на старте (см. 001-baseline-schema).
+#
+# Идемпотентность: NOT tableExists.
+databaseChangeLog:
+  - changeSet:
+      id: 025-create-subscription-ledger
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: subscription_ledger
+      changes:
+        - createTable:
+            tableName: subscription_ledger
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: subscription_id
+                  type: BIGINT
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: occurred_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: kind
+                  type: VARCHAR(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: delta_seconds
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: balance_after_seconds
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: payment_id
+                  type: BIGINT
+              - column:
+                  name: note
+                  type: VARCHAR(255)
+        - createIndex:
+            tableName: subscription_ledger
+            indexName: idx_ledger_tg_time
+            columns:
+              - column:
+                  name: telegram_id
+              - column:
+                  name: occurred_at

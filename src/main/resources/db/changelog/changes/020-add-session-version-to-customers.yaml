@@ -1,0 +1,39 @@
+# Session-version для server-side revocation web-ЛК сессий.
+#
+# AccountSessionService использует stateless signed cookie (HMAC-SHA256 от bot-token),
+# так что на этапе MVP не было способа отозвать сессию без смены секрета (что разлогинит
+# ВСЕХ юзеров разом — too aggressive). Теперь в cookie payload помимо telegram_id и exp
+# включается session_version из этой колонки; при parse мы сравниваем с актуальным значением
+# у юзера. Несовпадение → 401.
+#
+# Когда инкрементить:
+#  - при смене email (POST /api/me/email)
+#  - при удалении email (DELETE /api/me/email)
+#  - возможно в будущем: ручной "logout from all devices" из ЛК / админ-команда
+#
+# Default 0 → все существующие cookies на момент деплоя имеют sv=0 (отсутствие = 0 по
+# граceful fallback в parse), а у всех юзеров в БД session_version=0. Совпадение →
+# существующие сессии не разлогиниваются деплоем. После первой смены email колонка станет 1,
+# старый cookie с sv=0 не совпадёт → 401.
+#
+# Идемпотентность через NOT columnExists.
+databaseChangeLog:
+  - changeSet:
+      id: 020-add-session-version-to-customers
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: customers
+                columnName: session_version
+      changes:
+        - addColumn:
+            tableName: customers
+            columns:
+              - column:
+                  name: session_version
+                  type: INTEGER
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false

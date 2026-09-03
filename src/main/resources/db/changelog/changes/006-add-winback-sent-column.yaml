@@ -1,0 +1,26 @@
+# Колонка winback_sent — флаг "уже отправили post-expiry напоминание этой подписке".
+#
+# Ставится в true внутри SubscriptionExpiryNotifier.processWinbacks когда юзеру
+# отправлено напоминание через 2-4 дня после истечения. Сбрасывается в false
+# при следующей активации подписки (AccessService.activatePaidSubscription), чтобы
+# если юзер заплатит → снова истечёт → получит ещё один winback через 3 дня.
+databaseChangeLog:
+  - changeSet:
+      id: 006-add-winback-sent-column
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: customers
+                columnName: winback_sent
+      changes:
+        - addColumn:
+            tableName: customers
+            columns:
+              - column:
+                  name: winback_sent
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false

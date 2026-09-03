@@ -1,0 +1,31 @@
+# Колонка version на customers — для JPA optimistic locking (@Version).
+#
+# Зачем: при параллельной обработке (например, webhook от YooKassa и Stars
+# почти одновременно для одного юзера, или /refund во время автопродления)
+# два потока могут прочитать expires_at и оба сохранить новое значение —
+# одно из обновлений потеряется. Payment уже имеет version-колонку с самого
+# baseline (см. 001), Customer — нет. Эта миграция выравнивает.
+#
+# Default 0 для существующих строк — Hibernate инкрементит при следующем
+# save(), коллизий не будет: первый save() прочтёт version=0, попытается
+# поставить =1, увидит другое значение → OptimisticLockingFailureException.
+databaseChangeLog:
+  - changeSet:
+      id: 011-add-version-to-customers
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: customers
+                columnName: version
+      changes:
+        - addColumn:
+            tableName: customers
+            columns:
+              - column:
+                  name: version
+                  type: BIGINT
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false

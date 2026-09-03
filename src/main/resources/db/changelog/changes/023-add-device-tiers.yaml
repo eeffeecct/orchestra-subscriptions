@@ -1,0 +1,179 @@
+# Тарифы по числу устройств + детект устройств через клиентское приложение-заголовки (x-hwid и др.).
+#
+# Что добавляется:
+#   customers.subscription_token   — opaque AccessProvider-токен, извлечённый из subscription_link
+#                                    (…/sub/<token>). Индексированный лукап «токен → юзер» для
+#                                    /sub/<token> (детект устройств). Поддерживается
+#                                    JPA-хуком Customer.syncSubscriptionToken; здесь — backfill
+#                                    для существующих строк (Postgres substring по regexp).
+#   customers.device_limit         — лимит HWID-слотов текущего тарифа. NULL = legacy-юзер
+#                                    (действует app.default-device-limit, 0 = без лимита).
+#   customers.device_tier_id       — id ступени app.device-tiers последней покупки.
+#   customers.autorenew_device_tier_id — ступень для автосписания (вместе с autorenew_plan_id).
+#   payments.device_tier_id        — ступень, выбранная при покупке (для webhook/истории).
+#   user_devices                   — устройства, замеченные на /sub/<token>:
+#     hwid          — заголовок x-hwid (UUID-подобный, 10-64 симв.)
+#     device_model  — x-device-model (iPhone15,2 / ELP-NX1 …)
+#     device_os     — x-device-os (iOS/Android/Windows/macOS), os_version — x-ver-os
+#     user_agent    — User-Agent последнего фетча (клиентское приложение/4.6.0)
+#     status        — ACTIVE (занимает слот) / BLOCKED (сверх лимита) / REVOKED (отключён юзером)
+#     first_seen_at / last_seen_at — регистрация и последний фетч (двигается с шагом ≥1ч)
+#     telegram_id   — снапшот, не FK (конвенция: referrals/magic_links так же)
+#
+# Индексы:
+#   - UNIQUE (telegram_id, hwid) — одно устройство = одна строка, конкурентные фетчи не дублируют
+#   - btree customers.subscription_token — hot-path лукап на каждый фетч подписки
+#
+# Идемпотентность: NOT tableExists / NOT columnExists (прод-таблицы старше Liquibase).
+databaseChangeLog:
+  - changeSet:
+      id: 023-add-device-tiers-user-devices
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: user_devices
+      changes:
+        - createTable:
+            tableName: user_devices
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: version
+                  type: BIGINT
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: hwid
+                  type: VARCHAR(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: device_model
+                  type: VARCHAR(128)
+              - column:
+                  name: device_os
+                  type: VARCHAR(64)
+              - column:
+                  name: os_version
+                  type: VARCHAR(64)
+              - column:
+                  name: user_agent
+                  type: VARCHAR(255)
+              - column:
+                  name: status
+                  type: VARCHAR(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: first_seen_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: last_seen_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            tableName: user_devices
+            columnNames: telegram_id, hwid
+            constraintName: uk_user_devices_telegram_id_hwid
+
+  - changeSet:
+      id: 023-add-device-columns-customers
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: customers
+                columnName: device_limit
+      changes:
+        - addColumn:
+            tableName: customers
+            columns:
+              - column:
+                  name: device_limit
+                  type: INT
+              - column:
+                  name: device_tier_id
+                  type: VARCHAR(64)
+              - column:
+                  name: autorenew_device_tier_id
+                  type: VARCHAR(64)
+              - column:
+                  name: subscription_token
+                  type: VARCHAR(255)
+        - createIndex:
+            tableName: customers
+            indexName: idx_customers_subscription_token
+            columns:
+              - column:
+                  name: subscription_token
+
+  - changeSet:
+      id: 023-backfill-subscription-token
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - columnExists:
+            tableName: customers
+            columnName: subscription_token
+      changes:
+        # Backfill токена из subscription_link для существующих юзеров: часть после последнего
+        # «/sub/», без query/fragment. Тот же алгоритм, что SubscriptionLinks.extractToken.
+        # (?:…) — Postgres substring возвращает первую capture-группу.
+        - sql:
+            dbms: postgresql
+            sql: >-
+              UPDATE customers
+              SET subscription_token = substring(subscription_link from '/sub/([^/?#]+)')
+              WHERE subscription_link LIKE '%/sub/%'
+                AND subscription_token IS NULL
+
+  - changeSet:
+      id: 023-add-device-custom-name
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: user_devices
+                columnName: custom_name
+      changes:
+        # Пользовательское имя устройства («телефон мамы») — для семейной подписки, где
+        # сырые модели («iPhone15,2» ×3) неотличимы. Задаётся в Mini App, NULL = не задано.
+        - addColumn:
+            tableName: user_devices
+            columns:
+              - column:
+                  name: custom_name
+                  type: VARCHAR(64)
+
+  - changeSet:
+      id: 023-add-device-tier-id-payments
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: payments
+                columnName: device_tier_id
+      changes:
+        - addColumn:
+            tableName: payments
+            columns:
+              - column:
+                  name: device_tier_id
+                  type: VARCHAR(64)

@@ -1,0 +1,30 @@
+# Optimistic-lock колонка для magic_links — закрывает race на double-consume.
+#
+# Сценарий race: атакующий перехватил magic-link URL и кликает одновременно
+# с владельцем (window ~200мс между TX1 read и TX2 read). Обе транзакции
+# видят used_at=null, обе ставят used_at и commit'ят — оба получают cookie.
+#
+# С @Version у MagicLink: вторая транзакция получит OptimisticLockingFailureException
+# на save, мы её ловим в MagicLinkService.consume и отбрасываем как
+# InvalidMagicLinkException — атакующий получит /account/expired.
+#
+# По умолчанию version=0 для уже существующих токенов (если такие есть после
+# деплоя в полу-сессии clicked-not-clicked состоянии).
+databaseChangeLog:
+  - changeSet:
+      id: 018-add-version-to-magic-links
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: magic_links
+                columnName: version
+      changes:
+        - addColumn:
+            tableName: magic_links
+            columns:
+              - column:
+                  name: version
+                  type: BIGINT
+                  defaultValueNumeric: 0

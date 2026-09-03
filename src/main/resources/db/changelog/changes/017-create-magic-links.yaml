@@ -1,0 +1,82 @@
+# Таблица magic_links — одноразовые токены для входа в web-ЛК через email.
+#
+# Сценарий: юзер потерял Telegram → заходит на /account/login → вводит email →
+# мы шлём письмо с https://example.com/auth?token=<random32> → человек
+# кликает → токен помечается used_at → cookie session → ЛК с его ссылкой доступа.
+#
+# Поля:
+#   token            — base64url(32 байта secure random). UNIQUE для лукапа,
+#                      длина 64 символа (44 base64url + запас на префикс).
+#   telegram_id      — кому принадлежит. Снапшот, не FK: customers.telegram_id
+#                      UNIQUE, но без жёсткой связи проще — magic-link юзера
+#                      переживает любые миграции/чистки в customers.
+#   email            — снапшот адреса на момент создания. Юзер мог сменить
+#                      email после отправки письма — magic-link не должен
+#                      случайно «активировать» новый адрес.
+#   created_at       — для аналитики и cleanup-окна.
+#   expires_at       — обычно created_at + 15 мин (OWASP-стандарт для magic-link).
+#   used_at          — single-use marker. NULL = можно использовать. После клика
+#                      ставится now() и повторный consume отвергается.
+#
+# Индексы:
+#   - PK (id) — авто
+#   - UNIQUE token — для O(1) лукапа при GET /auth?token=...
+#   - btree expires_at — для @Scheduled-cleanup (DELETE WHERE expires_at < now() - 1d).
+#
+# Идемпотентность через NOT tableExists.
+databaseChangeLog:
+  - changeSet:
+      id: 017-create-magic-links
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: magic_links
+      changes:
+        - createTable:
+            tableName: magic_links
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: token
+                  type: VARCHAR(64)
+                  constraints:
+                    nullable: false
+                    unique: true
+                    uniqueConstraintName: uk_magic_links_token
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: email
+                  type: VARCHAR(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: expires_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: used_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+        - createIndex:
+            tableName: magic_links
+            indexName: idx_magic_links_expires_at
+            columns:
+              - column:
+                  name: expires_at
