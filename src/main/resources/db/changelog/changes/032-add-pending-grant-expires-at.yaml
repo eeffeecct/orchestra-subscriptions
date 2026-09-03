@@ -1,0 +1,89 @@
+databaseChangeLog:
+
+  # Срок годности отложенного подарка (pending_grants.expires_at).
+  #
+  # Что было. Грант привязан к @username, а не к telegram_id (админ в канале знает только ник),
+  # и висел вечно: невостребованный приз бессрочно хранил чужой ник и бессрочно оставался
+  # готовым сработать на ЛЮБОГО, кто когда-нибудь займёт этот ник — хоть через два года.
+  #
+  # Что стало. Гранту проставляется expires_at = granted_at + app.retention.pending-grant-days
+  # (30 дней). Просроченные не находятся выборками (PendingGrantRepository) и удаляются
+  # плановой чисткой (RetentionCleanupService).
+  #
+  # Три changeSet'а, а не один: колонка добавляется NULLable, потом заполняется у существующих
+  # строк, и только потом становится NOT NULL. Иначе addColumn с NOT NULL упал бы на любой
+  # непустой таблице и остановил ВЕСЬ деплой (Liquibase встаёт на первом же провалившемся
+  # changeSet).
+  - changeSet:
+      id: 032-add-pending-grants-expires-at
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: pending_grants
+                columnName: expires_at
+      changes:
+        - addColumn:
+            tableName: pending_grants
+            columns:
+              - column:
+                  name: expires_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+
+  # Бэкфилл существующих строк: срок отсчитывается от МОМЕНТА ВНЕДРЕНИЯ, а не от granted_at.
+  #
+  # Почему не granted_at + 30 дней, что выглядело бы логичнее. На проде на момент правки
+  # лежат 3 невостребованных гранта от 2026-05-14, то есть 92-дневной давности: по правилу
+  # «от выдачи» они оказались бы просроченными в момент деплоя и были бы удалены первой же
+  # ночной чисткой — молча, в ту же ночь. Смысл срока хранения в том, чтобы не держать записи
+  # вечно, а не в том, чтобы задним числом уничтожить уже выданные подарки. Поэтому все
+  # существующие гранты получают полные 30 дней от внедрения: у владельца есть месяц заметить
+  # и решить (перевыдать через /grant либо дать сгореть), и ничего не пропадает на деплое.
+  #
+  # На НОВЫЕ гранты это не влияет: им срок ставит PendingGrant.onCreate() от granted_at.
+  #
+  # Оставить NULL было нельзя: колонка становится NOT NULL, а в выборках NULL молча провалил бы
+  # сравнение `expires_at > now` — грант перестал бы срабатывать вообще, вместо того чтобы
+  # сгореть по сроку.
+  #
+  # Идемпотентно (WHERE expires_at IS NULL) и безопасно при повторном прогоне.
+  # INTERVAL — синтаксис Postgres: прод и тесты (testcontainers) на нём, dev-профиль поднимает
+  # схему Hibernate'ом и Liquibase там выключен (тот же приём, что в 030 и 027).
+  - changeSet:
+      id: 032-backfill-pending-grants-expires-at
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - columnExists:
+            tableName: pending_grants
+            columnName: expires_at
+      changes:
+        - sql:
+            dbms: postgresql
+            splitStatements: true
+            sql: >-
+              UPDATE pending_grants SET expires_at = now() + INTERVAL '30 days'
+               WHERE expires_at IS NULL;
+
+  # NOT NULL — уже после бэкфилла. sqlCheck + MARK_RAN: если по какой-то причине остались
+  # строки с NULL, деплой не встанет, а оператор увидит в логе, что чинить. Сущность при этом
+  # продолжит работать: PendingGrant.onCreate() всё равно проставляет срок каждой новой строке.
+  - changeSet:
+      id: 032-pending-grants-expires-at-not-null
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - onFailMessage: >-
+            pending_grants: NOT NULL на expires_at НЕ поставлен — остались строки с NULL.
+            Найти: SELECT id, username, granted_at FROM pending_grants WHERE expires_at IS NULL.
+            Лечение: UPDATE pending_grants SET expires_at = granted_at + INTERVAL '30 days'
+            WHERE expires_at IS NULL, затем повторить деплой.
+        - sqlCheck:
+            expectedResult: "0"
+            sql: SELECT count(*) FROM pending_grants WHERE expires_at IS NULL
+      changes:
+        - addNotNullConstraint:
+            tableName: pending_grants
+            columnName: expires_at
+            columnDataType: TIMESTAMP WITHOUT TIME ZONE

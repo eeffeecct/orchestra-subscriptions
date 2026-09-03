@@ -1,0 +1,151 @@
+# Промокоды на скидку. Юзер вводит код в payment drawer Mini App, цена пересчитывается,
+# код помечается как использованный после успешной SUCCEEDED-оплаты.
+#
+# discount_type:
+#   PERCENT — discount_value в процентах (1..99). Скидка = round(amount * value / 100).
+#   FIXED   — discount_value в копейках. Скидка = min(value, amount). При amount<=value
+#             фактическая скидка обрезается, чтобы цена не ушла в минус.
+#
+# promo_usages — отдельная таблица (а не колонка в payments) по двум причинам:
+#   1) UNIQUE(payment_id) гарантирует 1 промо на 1 платёж — даже при ретраях фронта.
+#   2) reverted_at позволяет идемпотентно откатить usage при refund (мирроринг механики
+#      реферальной программы из 008-миграции).
+#
+# Уникальности «один промо на юзера» нет на уровне БД — service-layer check проще
+# и не блокирует возможность вручную разрешить повтор в будущем (например, для VIP-кодов).
+databaseChangeLog:
+  - changeSet:
+      id: 009-add-promo-codes
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: promo_codes
+      changes:
+        - createTable:
+            tableName: promo_codes
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: version
+                  type: BIGINT
+              # Хранится в верхнем регистре (нормализуется в сервисе при create/lookup),
+              # чтобы юзер мог ввести "welcome20" / "Welcome20" и попасть в "WELCOME20".
+              - column:
+                  name: code
+                  type: VARCHAR(64)
+                  constraints:
+                    nullable: false
+                    unique: true
+              - column:
+                  name: discount_type
+                  type: VARCHAR(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: discount_value
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              # NULL = безлимит. Если задан — service не даст применить когда used_count>=max_uses.
+              - column:
+                  name: max_uses
+                  type: INTEGER
+              - column:
+                  name: used_count
+                  type: INTEGER
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+              # NULL = бессрочный.
+              - column:
+                  name: expires_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              # Soft-disable: /promo disable выставляет в false. Не удаляем строку, чтобы
+              # сохранить историю использований и аудит.
+              - column:
+                  name: active
+                  type: BOOLEAN
+                  defaultValueBoolean: true
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_by_telegram_id
+                  type: BIGINT
+        - createTable:
+            tableName: promo_usages
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: version
+                  type: BIGINT
+              - column:
+                  name: promo_code_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              # UNIQUE: 1 промо на 1 платёж. Ретрай фронта или дубль-запрос
+              # не создаст вторую строку и не задвоит decrement used_count при refund.
+              - column:
+                  name: payment_id
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+                    unique: true
+              # Фактическая сумма скидки, применённой к этому платежу.
+              # Хранится отдельно от promo_codes.discount_value, чтобы переживать
+              # изменение настроек кода после факта (или вычисление от amount для PERCENT).
+              - column:
+                  name: discount_kopeks
+                  type: BIGINT
+                  constraints:
+                    nullable: false
+              - column:
+                  name: used_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              # NULL = активный usage. Заполняется при refund, чтобы /promo info видел
+              # актуальную статистику и used_count откатывался идемпотентно.
+              - column:
+                  name: reverted_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+        # Быстрый /promo info CODE: список последних использований кода.
+        - createIndex:
+            tableName: promo_usages
+            indexName: idx_promo_usages_promo_code_id
+            columns:
+              - column:
+                  name: promo_code_id
+        # «Юзер уже использовал этот код?» — service-layer guard проверяет 1-on-1 reuse.
+        - createIndex:
+            tableName: promo_usages
+            indexName: idx_promo_usages_user_code
+            columns:
+              - column:
+                  name: telegram_id
+              - column:
+                  name: promo_code_id

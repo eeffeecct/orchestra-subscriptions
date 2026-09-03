@@ -1,0 +1,18 @@
+# Удаляет колонку provider_traffic_snapshot_bytes с payments. Снапшот used_traffic
+# снимался на момент активации для self-service refund-чека «не пользовался ни разу».
+# После переноса возвратов в поддержку (только YooKassa, вручную) этот авто-чек убран,
+# поле больше нигде не читается — удаляем, заодно убирая лишний AccessProvider-roundtrip на
+# каждой активации. Историю значений не сохраняем: она не использовалась.
+databaseChangeLog:
+  - changeSet:
+      id: 022-drop-provider-traffic-snapshot
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - columnExists:
+            tableName: payments
+            columnName: provider_traffic_snapshot_bytes
+      changes:
+        - dropColumn:
+            tableName: payments
+            columnName: provider_traffic_snapshot_bytes

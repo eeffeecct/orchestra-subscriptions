@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ссылка устарела — Orchestra</title>
+    <meta name="robots" content="noindex,nofollow">
+    <!-- Шрифты лежат у нас, а не на fonts.googleapis.com: иначе браузер каждого клиента
+         сам отдаёт Google свой IP и User-Agent, и Google приходится указывать в Политике
+         получателем данных. Плюс внешний домен бывает недоступен из российских сетей.
+         Путь под /app/ — единственный проксируемый фронтом, см. fonts.css. -->
+    <link rel="stylesheet" href="/app/fonts/fonts.css">
+    <link rel="stylesheet" href="style.css?v=12">
+</head>
+<body>
+    <!-- Matrix-rain бэкграунд (см. account/index.html) -->
+    <div class="bg-dvd" id="bg-dvd" aria-hidden="true"></div>
+
+    <main class="account">
+        <header class="account-header">
+            <div class="brand"><b>Orchestra</b></div>
+        </header>
+
+        <section class="content">
+            <div class="card error-card">
+                <div class="card-value-big">Ссылка не работает</div>
+                <p class="card-sub">
+                    Ссылка для входа устарела (срок действия 15 минут) либо уже была использована.
+                </p>
+                <p class="card-sub">
+                    Запросите новую — введите email на странице входа, и мы пришлём свежую ссылку.
+                </p>
+                <a class="btn-primary" href="/account/login">Запросить новую</a>
+            </div>
+
+            <!-- Onboarding-блок (тот же что на /account/login) — на случай если юзер
+                 случайно попал сюда по битой ссылке и вообще ещё не наш клиент. -->
+            <div class="card onboarding-card">
+                <div class="card-label">Ещё не пользуетесь Orchestra?</div>
+                <p class="card-sub">
+                    Регистрация идёт через Telegram-бот. Получите 7 дней пробного периода.
+                </p>
+                <a class="btn-primary" href="https://t.me/your_bot" target="_blank" rel="noopener">Открыть бот в Telegram</a>
+            </div>
+        </section>
+    </main>
+
+    <script src="bg.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Orchestra — Админ-панель</title>
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="color-scheme" content="dark">
+    <!-- Шрифты лежат у нас, а не на fonts.googleapis.com: иначе браузер каждого клиента
+         сам отдаёт Google свой IP и User-Agent, и Google приходится указывать в Политике
+         получателем данных. Плюс внешний домен бывает недоступен из российских сетей.
+         Путь под /app/ — единственный проксируемый фронтом, см. fonts.css. -->
+    <link rel="stylesheet" href="/app/fonts/fonts.css">
+    <link rel="stylesheet" href="style.css?v=3">
+</head>
+<body class="gatepage">
+
+<div class="gatecard">
+    <div class="gatecard__brand">
+        <span class="logo" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="logo__text">
+            <b>ORCHESTRA</b>
+            <em>админ-панель</em>
+        </span>
+    </div>
+
+    <h1>Вход по ссылке из бота</h1>
+
+    <p class="gate" id="gate-reason" hidden></p>
+
+    <ol class="steps">
+        <li>Откройте бот и отправьте команду <code>/admin</code>.</li>
+        <li>Перейдите по ссылке из ответа — она действует 10 минут.</li>
+        <li>Вход в браузере держится 12 часов.</li>
+    </ol>
+
+    <p class="panel__note">
+        Ссылка выдаётся только владельцу сервиса. Кнопка «Выйти на всех устройствах»
+        в личном кабинете закрывает и панель.
+    </p>
+</div>
+
+<script src="login.js?v=3"></script>
+</body>
+</html>

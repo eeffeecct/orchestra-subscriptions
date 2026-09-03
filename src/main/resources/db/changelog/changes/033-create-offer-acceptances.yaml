@@ -1,0 +1,45 @@
+# Согласие с публичной офертой при первом запуске бота.
+#
+# Зачем отдельная таблица, а не колонка в customers. Согласие берётся РАНЬШЕ, чем у человека
+# появляется строка в customers: на /start её ещё нет (она создаётся выдачей триала или первой
+# покупкой). Завести строку заранее нельзя — AccessService.createTrialAccess отказывает по самому
+# факту её существования, то есть предварительная запись молча лишила бы человека триала.
+#
+# telegram_id — первичный ключ: согласие одно на человека, повторные нажатия «Принять»
+# идемпотентны и не плодят строк.
+#
+# offer_url хранится вместе с отметкой намеренно: оферта живёт на Telegraph и правится, а
+# доказательством служит то, ЧТО именно человек принял в тот момент. Без URL отметка
+# «согласился 15.08.2026» ничего не подтверждает после первой же правки текста оферты.
+#
+# Существующих пользователей это не касается: гейт показывается только тем, у кого ещё нет
+# строки в customers (см. OnboardingHandler) — то есть буквально первому запуску.
+databaseChangeLog:
+  - changeSet:
+      id: 033-create-offer-acceptances
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: offer_acceptances
+      changes:
+        - createTable:
+            tableName: offer_acceptances
+            columns:
+              - column:
+                  name: telegram_id
+                  type: BIGINT
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: accepted_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              # Пусто, если на момент согласия OFFER_URL не был настроен: гейт в этом случае
+              # показывает текст без ссылки, и подменять его выдуманным адресом нельзя.
+              - column:
+                  name: offer_url
+                  type: VARCHAR(512)

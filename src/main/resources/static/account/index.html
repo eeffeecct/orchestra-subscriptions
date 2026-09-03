@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchestra — Личный кабинет</title>
+    <meta name="robots" content="noindex,nofollow">
+    <!-- Шрифты лежат у нас, а не на fonts.googleapis.com: иначе браузер каждого клиента
+         сам отдаёт Google свой IP и User-Agent, и Google приходится указывать в Политике
+         получателем данных. Плюс внешний домен бывает недоступен из российских сетей.
+         Путь под /app/ — единственный проксируемый фронтом, см. fonts.css. -->
+    <link rel="stylesheet" href="/app/fonts/fonts.css">
+    <link rel="stylesheet" href="style.css?v=12">
+</head>
+<body>
+    <!--
+      Matrix-rain бэкграунд (тот же что в Mini App). Колонки спавнит bg.js,
+      z-index ниже всего контента, pointer-events:none. Чисто декоративно.
+    -->
+    <div class="bg-dvd" id="bg-dvd" aria-hidden="true"></div>
+
+    <main class="account">
+        <header class="account-header">
+            <div class="brand"><b>Orchestra</b></div>
+            <!-- Выход инкрементит session_version (AccountController.logout), то есть
+                 закрывает ЛК во всех браузерах сразу. Надпись обязана это отражать. -->
+            <button type="button" class="link-btn" id="logout-btn">Выйти на всех устройствах</button>
+        </header>
+
+        <!-- Состояние «загрузка»: показано до ответа /api/account/me. -->
+        <section class="loading" id="loading-section">
+            <p>Загрузка…</p>
+        </section>
+
+        <!--
+          Основная часть. JS снимает hidden когда /api/account/me ответил 200.
+          На 401 — редирект на /account/login (там форма для запроса нового magic-link).
+        -->
+        <section class="content" id="content-section" hidden>
+            <!--
+              Баннер возврата с YooKassa. ТЕКСТ И СТИЛЬ ставит JS на основании
+              реального статуса платежа (а не URL-маркера), потому что YK
+              редиректит на returnUrl и при успехе, и при отмене, и при «Назад».
+              Три варианта: success/pending/failed → разные классы и тексты.
+            -->
+            <div class="paid-banner" id="paid-banner" hidden>
+                <b id="paid-banner-title">—</b>
+                <span id="paid-banner-text">—</span>
+            </div>
+
+            <div class="card">
+                <div class="card-label">Email</div>
+                <div class="card-value" id="user-email">—</div>
+            </div>
+
+            <div class="card status-card" id="status-card">
+                <div class="card-label">
+                    <span class="led" id="status-led"></span>
+                    <span id="status-label">Подписка</span>
+                </div>
+                <div class="card-value-big" id="status-big">—</div>
+                <div class="card-sub" id="status-sub">—</div>
+            </div>
+
+            <!--
+              Мои подписки — ТОЛЬКО НА ЧТЕНИЕ. Переключаться отсюда нельзя, и об этом
+              написано прямым текстом: ограничение, о котором не написано, человек читает
+              как поломку. Карточка появляется только когда подписок больше одной.
+            -->
+            <div class="card subs-card" id="subs-card" hidden>
+                <div class="card-label">Мои подписки</div>
+                <div class="subs-list" id="subs-list"></div>
+                <p class="subs-note" id="subs-note"></p>
+            </div>
+
+            <div class="card sub-card" id="sub-card" hidden>
+                <div class="card-label">Ссылка подписки</div>
+                <div class="sub-value" id="sub-value"></div>
+                <button type="button" class="btn-primary" id="copy-btn">Скопировать ссылку</button>
+            </div>
+
+            <!-- ========== Покупка/продление ========== -->
+            <div class="card pay-card">
+                <div class="card-label" id="pay-card-label">Тариф</div>
+                <div class="tariffs" id="tariffs"></div>
+
+                <!-- Чекбокс автопродления — показываем только если recurrentEnabled от бэка -->
+                <label class="pay-toggle" id="pay-autorenew-toggle" hidden>
+                    <input type="checkbox" id="pay-autorenew-checkbox">
+                    <span class="pay-toggle__text">
+                        <b>С автопродлением</b>
+                        <small>Карта будет сохранена, подписка продлевается автоматически за 24 часа до окончания. Отключение — в Telegram-боте.</small>
+                    </span>
+                </label>
+
+                <!-- Промокод. По дефолту свёрнут до ссылки «Есть промокод?». -->
+                <div class="promo-block">
+                    <button type="button" class="promo-toggle" id="promo-toggle">Есть промокод?</button>
+                    <div class="promo-row" id="promo-row" hidden>
+                        <input type="text" class="promo-input" id="promo-input"
+                               placeholder="Введите код" autocomplete="off"
+                               autocapitalize="characters" spellcheck="false">
+                        <button type="button" class="promo-apply" id="promo-apply">Применить</button>
+                    </div>
+                    <p class="promo-result" id="promo-result" hidden></p>
+                </div>
+
+                <button type="button" class="btn-primary" id="pay-btn">
+                    <span id="pay-btn-label">Оплатить картой</span>
+                    <span class="pay-btn-price" id="pay-btn-price">—</span>
+                </button>
+                <p class="pay-hint">
+                    Оплата открывается в окне ЮKassa. Принимаем Visa, Mastercard, МИР.
+                </p>
+            </div>
+
+            <p class="hint">
+                Это резервный доступ к ссылке подписки. Все остальные действия
+                (рефералы, история платежей) — в <a href="https://t.me/your_bot" target="_blank" rel="noopener">Telegram-боте</a>.
+            </p>
+        </section>
+    </main>
+
+    <script src="bg.js?v=1"></script>
+    <script src="script.js?v=12"></script>
+</body>
+</html>

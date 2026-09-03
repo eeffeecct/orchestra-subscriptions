@@ -1,0 +1,79 @@
+# Таблица pending_grants — «отложенные» подарочные дни для победителей конкурса,
+# у которых ещё нет записи в customers. Админ выдаёт приз через /grant @username 30,
+# а активация происходит автоматически в момент когда юзер впервые открывает бот
+# или Mini App (PendingGrantService.applyIfAny).
+#
+# Привязка к telegram_username, а не к telegram_id: админ в канале/розыгрыш-боте видит
+# именно @username, а telegram_id незнакомого юзера резолвить через Bot API нельзя.
+# Username хранится в lower-case, поиск case-insensitive — Telegram возвращает username
+# в том регистре, в котором юзер его выставил, и регистр между разными вызовами
+# не гарантируется.
+databaseChangeLog:
+  - changeSet:
+      id: 014-add-pending-grants
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - tableExists:
+                tableName: pending_grants
+      changes:
+        - createTable:
+            tableName: pending_grants
+            columns:
+              - column:
+                  name: id
+                  type: BIGINT
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              # Lowercased Telegram username (без @). Не UNIQUE: админ может выдать
+              # 2 разных приза одному юзеру (например 30 дней за 1 место + 7 дней за
+              # бонусный розыгрыш) — applyIfAny применит их в порядке granted_at.
+              - column:
+                  name: username
+                  type: VARCHAR(64)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: days
+                  type: INTEGER
+                  constraints:
+                    nullable: false
+              - column:
+                  name: granted_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+                  constraints:
+                    nullable: false
+              # Кто из админов выдал — для аудита. NULLable, т.к. в будущем гранты
+              # могут создаваться автоматически (например, реферал-кампанией).
+              - column:
+                  name: granted_by_telegram_id
+                  type: BIGINT
+              - column:
+                  name: used
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: used_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              # telegram_id юзера, на которого грант сработал. Заполняется в момент
+              # apply; полезно для аудита (юзер мог сменить username между granted_at
+              # и used_at — мы фиксируем кому фактически досталось).
+              - column:
+                  name: used_by_telegram_id
+                  type: BIGINT
+        # Главный индекс — поиск незаявленных грантов по username при каждом /start
+        # и /api/me. Partial index по used=false дал бы лучшую плотность, но
+        # Liquibase YAML не поддерживает WHERE в createIndex кросс-платформенно.
+        - createIndex:
+            tableName: pending_grants
+            indexName: idx_pending_grants_username_used
+            columns:
+              - column:
+                  name: username
+              - column:
+                  name: used

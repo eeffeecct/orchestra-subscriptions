@@ -1,0 +1,36 @@
+# Чинит мину замедленного действия: строки с version = NULL.
+#
+# Что произошло. Колонка version (@Version, оптимистичные блокировки) добавлялась к уже
+# существующим таблицам без значения по умолчанию, поэтому у части старых строк там остался
+# NULL. Hibernate при ЛЮБОМ обновлении такой строки пытается инкрементировать версию и падает:
+#   java.lang.NullPointerException: Cannot invoke "java.lang.Long.longValue()"
+#   because "current" is null   (LongJavaType.next)
+#
+# Чем это грозило. Обновление платежа происходит на самых денежных путях: пометка REFUNDED
+# при возврате, простановка ссылки на чек, пометка FAILED реконсилером. Для 19 платежей
+# (принадлежащих 6 живым юзерам) возврат денег упал бы с NPE — деньги в ЮKassa вернулись бы,
+# а платёж остался бы SUCCEEDED, подписка не урезалась бы.
+#
+# Обнаружено 2026-08-12 переносом подписок: он первым попытался обновить эти строки.
+#
+# version = 0 (а не 1): именно это значение Hibernate ставит новым сущностям, так что
+# «починенные» строки становятся неотличимы от нормальных.
+#
+# Идемпотентность: WHERE version IS NULL — повторный прогон ничего не делает. Проверяем все
+# таблицы с @Version, а не только payments: сегодня NULL нашёлся в одной, но заводились
+# колонки одинаково, и молчаливая мина в остальных ничем не лучше.
+databaseChangeLog:
+  - changeSet:
+      id: 027-fix-null-optimistic-lock-versions
+      author: eeffeecct
+      changes:
+        - sql:
+            splitStatements: true
+            sql: >-
+              UPDATE payments      SET version = 0 WHERE version IS NULL;
+              UPDATE customers     SET version = 0 WHERE version IS NULL;
+              UPDATE user_devices  SET version = 0 WHERE version IS NULL;
+              UPDATE referrals     SET version = 0 WHERE version IS NULL;
+              UPDATE magic_links   SET version = 0 WHERE version IS NULL;
+              UPDATE promo_codes   SET version = 0 WHERE version IS NULL;
+              UPDATE promo_usages  SET version = 0 WHERE version IS NULL;

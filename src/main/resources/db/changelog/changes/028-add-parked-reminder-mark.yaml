@@ -1,0 +1,28 @@
+databaseChangeLog:
+
+  # Отметка «когда последний раз напоминали про замороженные деньги».
+  #
+  # ⚠️ Без неё напоминание держалось на часовом окне «возраст оплаты == 24 ч», а окно ловится
+  # ровно один раз ТОЛЬКО если планировщик тикает строго раз в час. @Scheduled(fixedDelay)
+  # стартует сразу при подъёме контекста, то есть каждый деплой добавляет внеочередной прогон
+  # в тот же час — и человек получал повторное письмо на каждый деплой. У нас их бывает
+  # несколько за час, так что «редкий дубль» превращался в рассылку.
+  #
+  # Колонка на subscriptions, а не на customers: напоминание относится к КОНКРЕТНОЙ
+  # замороженной подписке, и у человека их может быть несколько.
+  - changeSet:
+      id: 028-add-parked-reminded-at
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: subscriptions
+                columnName: parked_reminded_at
+      changes:
+        - addColumn:
+            tableName: subscriptions
+            columns:
+              - column:
+                  name: parked_reminded_at
+                  type: TIMESTAMP WITHOUT TIME ZONE

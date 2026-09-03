@@ -1,0 +1,57 @@
+# «Один промокод — один раз на человека» переезжает из кода в БД.
+#
+# До этой правки правило держалось ровно на одной проверке в PromoCodeService.checkUsable,
+# а она читает promo_usages — куда строка попадает ТОЛЬКО в момент SUCCEEDED. Все три входа
+# в оплату (Mini App, ЛК, бот) считают скидку read-only-превью, которое ничего не резервирует:
+# счета, выставленные параллельно, проходили проверку все до одного и все получали скидку.
+# Индекс — единственное место, где это правило становится настоящим инвариантом.
+#
+# Индекс ЧАСТИЧНЫЙ (reverted_at IS NULL): после возврата код снова доступен тому же человеку —
+# он не получил ни скидки, ни дней (та же семантика, что в
+# PromoUsageRepository.existsByPromoCodeIdAndTelegramIdAndRevertedAtIsNull).
+#
+# ⚠️ preConditions здесь не украшение. Если на проде уже лежат дубли — а накопиться они могли
+# за всё время, пока правило жило только в коде, — голый CREATE UNIQUE INDEX упал бы и уронил
+# ВЕСЬ деплой (Liquibase останавливает приложение на первом же провалившемся changeSet).
+# Поэтому при дублях changeSet помечается выполненным (MARK_RAN), деплой едет дальше, а индекс
+# создаётся отдельной миграцией уже после ручной чистки. Текст onFailMessage — инструкция
+# оператору, он попадает в лог старта.
+#
+# dbms: postgresql — createIndex в Liquibase не умеет WHERE, а частичный индекс сырым SQL
+# непереносим. Прод и тесты (testcontainers) на Postgres; dev-профиль поднимает схему
+# Hibernate'ом, Liquibase там выключен вовсе. Тот же приём — в 026-create-subscriptions.
+databaseChangeLog:
+  - changeSet:
+      id: 030-promo-usages-one-per-user
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - onFailMessage: >-
+            promo_usages: уникальный индекс uk_promo_usages_user_code НЕ создан — либо он уже
+            существует, либо в таблице есть дубли (promo_code_id, telegram_id) при
+            reverted_at IS NULL. Найти дубли:
+            SELECT promo_code_id, telegram_id, count(*) FROM promo_usages
+            WHERE reverted_at IS NULL GROUP BY 1, 2 HAVING count(*) > 1.
+            Лечение: оставить самое раннее применение, остальным проставить reverted_at
+            (и при необходимости поправить promo_codes.used_count), затем повторить деплой.
+        - not:
+            - indexExists:
+                tableName: promo_usages
+                indexName: uk_promo_usages_user_code
+        - sqlCheck:
+            expectedResult: "0"
+            sql: >-
+              SELECT count(*) FROM (
+                SELECT promo_code_id, telegram_id
+                  FROM promo_usages
+                 WHERE reverted_at IS NULL
+                 GROUP BY promo_code_id, telegram_id
+                HAVING count(*) > 1
+              ) dup
+      changes:
+        - sql:
+            dbms: postgresql
+            splitStatements: true
+            sql: >-
+              CREATE UNIQUE INDEX uk_promo_usages_user_code
+                ON promo_usages (promo_code_id, telegram_id) WHERE reverted_at IS NULL;

@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Orchestra</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+    <!--
+      Golos Text — основной текст: кириллица у него родная (Paratype), а не
+      «латиница с дорисованными буквами», как у Inter. Unbounded 700 — только
+      wordmark и крупное число дней. JetBrains Mono — ссылки, id, адреса.
+    -->
+    <!-- Шрифты лежат у нас, а не на fonts.googleapis.com: иначе браузер каждого клиента
+         сам отдаёт Google свой IP и User-Agent, и Google приходится указывать в Политике
+         получателем данных. Плюс внешний домен бывает недоступен из российских сетей.
+         Путь под /app/ — единственный проксируемый фронтом, см. fonts.css. -->
+    <link rel="stylesheet" href="/app/fonts/fonts.css">
+
+    <link rel="stylesheet" href="style.css?v=40">
+</head>
+<body>
+    <!--
+      Фон: свечение (css) + вертикально падающие колонки «O R C H E S T R A …».
+      Колонки спавнит JS (script.js :: spawnRainColumns) и не спавнит при
+      системной настройке «меньше движения». z-index: 0 + pointer-events: none —
+      под всем контентом, не ловит клики. Ручки прозрачности и скорости — в
+      spawnRainColumns, они намеренно ниже, чем были: дождь должен читаться как
+      фактура, а не как движение под текстом.
+    -->
+    <div class="bg-dvd" id="bg-dvd" aria-hidden="true"></div>
+
+    <div class="app">
+        <header class="header">
+            <h1 id="screen-title">Orchestra</h1>
+        </header>
+
+        <!--
+          4 экрана в одной странице. JS переключает .hidden при клике по нижней навигации.
+          SPA без роутинга — проще чем history API для такой мелочи.
+        -->
+        <main class="screens">
+
+            <!-- ========================  Главная ======================== -->
+            <section class="screen" data-screen-id="home">
+                <!--
+                  Email-capture баннер: показываем сверху Home только если у юзера нет
+                  привязанного email. Закрыть можно — в localStorage сохраняем флаг.
+                  По «Указать» переходит в Профиль → Email. Цель: восстановление доступа
+                  если потерял Telegram + резервная копия конфига при продлении.
+                -->
+                <div class="email-banner" id="email-banner" hidden>
+                    <span class="email-banner__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                    </span>
+                    <span class="email-banner__text">
+                        <b>Сохраните email</b>
+                        <small>Понадобится, если потеряете доступ к Telegram.</small>
+                    </span>
+                    <button type="button" class="email-banner__cta" id="email-banner-cta">Указать</button>
+                    <button type="button" class="email-banner__close" id="email-banner-close" aria-label="Закрыть">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+
+                <!--
+                  Status-card V2: LED + большая цифра дней + период до даты + прогресс-бар.
+                  #status оставлен как sub-line — script.js renderSubscriptionStatus
+                  ставит туда «пробный период до …» либо «нет активной подписки».
+                  #status-big — отдельная строка с числом дней (computed JS-ом).
+                -->
+                <section class="status-card">
+                    <div class="stat-row">
+                        <span class="led" id="status-led"></span>
+                        <span class="stat-label" id="status-label">Подписка</span>
+                    </div>
+                    <div>
+                        <div class="stat-big" id="status-big">…</div>
+                        <div class="stat-sub" id="status">загрузка…</div>
+                    </div>
+                    <div class="progress"><i id="status-progress"></i></div>
+                    <!--
+                      Автопродление строкой на главном экране, а не только в Профиле: это факт
+                      про деньги, и человек должен видеть сумму и дату списания там же, где срок.
+                      Показывается, только когда списание реально произойдёт (willCharge).
+                    -->
+                    <div class="stat-renew" id="status-renew" hidden></div>
+                </section>
+
+                <!--
+                  Самый дорогой для человека случай: доступа нет, а оплаченные дни лежат на
+                  замороженной подписке. Без этой плашки он идёт платить второй раз за то, что
+                  уже оплачено, — поэтому она стоит выше тарифов и предлагает бесплатный выход.
+                -->
+                <div class="rescue-banner" id="rescue-banner" hidden>
+                    <span class="rescue-banner__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="18" height="18"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>
+                    </span>
+                    <span class="rescue-banner__text">
+                        <b id="rescue-banner-title">Есть сохранённые дни</b>
+                        <small id="rescue-banner-sub">Оплата не требуется.</small>
+                    </span>
+                    <button type="button" class="rescue-banner__cta" id="rescue-banner-cta">Включить</button>
+                </div>
+
+                <!-- Ссылка подписки: появляется, как только бэкенд выдал пробный период или
+                     оплату. Hidden по умолчанию, JS снимет его при непустом data.subscriptionLink.
+                     Показываем ОДНУ ссылку — accessLink, адрес нашего эндпоинта выдачи; ссылка
+                     провайдера остаётся только фолбэком, если свою построить не удалось. -->
+                <section class="section" id="home-sub-section" hidden>
+                    <h3 class="section-title">Ссылка подписки</h3>
+                    <div class="sub-box">
+                        <div class="sub-box__url">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                            <span id="home-sub-value"></span>
+                        </div>
+                        <div class="sub-box__actions">
+                            <button class="sub-action sub-action--primary" id="home-sub-copy">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                <span>Скопировать ссылку</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Подсказка новичку. Ссылка сама по себе ничего не включает: её надо
+                         вставить в приложение. Пока у человека нет ни одного устройства, переход к
+                         установке полезнее, чем повторная кнопка «скопировать» — именно здесь
+                         новичок упирается в «скопировал, а дальше что». Показ снимает JS. -->
+                    <button type="button" class="sub-nudge" id="home-setup-nudge" hidden>
+                        <span class="sub-nudge__icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M12 2v13"/><path d="m8 11 4 4 4-4"/><path d="M4 20h16"/></svg>
+                        </span>
+                        <span class="sub-nudge__text">
+                            <b>Приложение ещё не установлено</b>
+                            <small>Ссылку нужно вставить в приложение — покажем, куда.</small>
+                        </span>
+                        <span class="sub-nudge__go" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="m9 18 6-6-6-6"/></svg>
+                        </span>
+                    </button>
+
+                    <!-- Информационный блок: ссылка одна и та же для всех устройств, и это
+                         стоит сказать прямо — иначе человек ищет «вторую ссылку» для второго
+                         устройства и пишет в поддержку. -->
+                    <div class="sub-routing-note">
+                        <span class="sub-routing-note__icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+                        </span>
+                        <span class="sub-toggle__text">
+                            <b>Одна ссылка на все устройства</b>
+                            <small>Вставьте её на каждом устройстве в пределах лимита тарифа.</small>
+                        </span>
+                    </div>
+
+                </section>
+
+                <!--
+                  Что входит в подписку: две бегущие строки (верхняя влево, нижняя вправо).
+                  Содержимое рендерит JS (renderServices); наборы между рядами не
+                  пересекаются — за один проход человек видит больше пунктов.
+                -->
+                <section class="section services-section">
+                    <h3 class="section-title">Что входит в <b>Orchestra</b></h3>
+                    <p class="services-sub">Одна подписка на все устройства</p>
+                    <div class="services-marquee services-marquee--left">
+                        <div class="services-marquee__track" id="services-track-top"></div>
+                    </div>
+                    <div class="services-marquee services-marquee--right">
+                        <div class="services-marquee__track" id="services-track-bottom"></div>
+                    </div>
+                </section>
+
+                <!--
+                  Витрина покупки одной карточкой: ступень устройств и срок — это две
+                  части ОДНОГО выбора (ступень пересчитывает цены сроков прямо под ней),
+                  а раньше они стояли двумя отдельными секциями с одинаковым оформлением.
+                  Кнопка оплаты идёт сразу за витриной: до этого между выбором тарифа и
+                  кнопкой стоял блок бесплатных прокси, и человек пролистывал мимо оплаты.
+                -->
+                <section class="section">
+                    <h3 class="section-title">Тариф</h3>
+                    <div class="buy-card">
+                        <div class="buy-card__group">
+                            <!-- Справа от заголовка — полное имя выбранной ступени
+                                 («Семейная ×5»): в самих чипсах стоят только числа. -->
+                            <div class="buy-card__head">
+                                <span class="buy-card__label">Устройств</span>
+                                <span class="buy-card__value" id="tier-name"></span>
+                            </div>
+                            <!-- Ступени по числу устройств (DEVICE_TIERS в script.js, синхронизировано
+                                 с app.device-tiers). Выбор пересчитывает цены карточек срока ниже;
+                                 deviceTierId уходит в /api/payments/*. -->
+                            <div class="device-tiers" id="device-tiers"></div>
+                        </div>
+                        <div class="buy-card__group">
+                            <div class="buy-card__head">
+                                <span class="buy-card__label">Срок</span>
+                            </div>
+                            <div class="tariffs" id="tariffs"></div>
+                        </div>
+                    </div>
+
+                    <!-- Зачёркнутой «цены без скидки» в кнопке больше нет: она считалась
+                         как месячный тариф × число месяцев, то есть по ней никто никогда
+                         не платил. В кнопке стоит сумма, которую спишут. -->
+                    <button class="btn-primary" id="buy-btn">
+                        <span id="buy-btn-label">Оплатить</span>
+                        <span class="price-group" id="buy-btn-price">
+                            <span class="price-new" id="buy-btn-price-new">…</span>
+                        </span>
+                    </button>
+                </section>
+
+            </section>
+
+            <!-- ========================  Настройка ====================== -->
+            <section class="screen hidden" data-screen-id="setup">
+                <!-- Компактный header — иконка inline c заголовком, без огромного хиро -->
+                <div class="screen-header">
+                    <div class="screen-header__icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6M6 8h12l-1 7a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3L6 8zM12 18v4"/></svg>
+                    </div>
+                    <div class="screen-header__text">
+                        <div class="screen-header__title">Как подключить</div>
+                        <div class="screen-header__sub">3 шага</div>
+                    </div>
+                </div>
+
+                <ol class="steps">
+                    <li><b>1</b><span>Установите клиентское приложение, кнопки ниже</span></li>
+                    <li><b>2</b><span>Скопируйте ссылку подписки на главном экране</span></li>
+                    <li><b>3</b><span>Вставьте ссылку в приложение, дальше он настроится сам</span></li>
+                </ol>
+
+                <!-- клиентское приложение downloads: 3 кнопки под платформы. data-url читает JS и открывает
+                     через tg.openLink (in-app browser в Telegram) -->
+                <section class="section">
+                    <h3 class="section-title">Скачать приложение</h3>
+                    <div class="platforms">
+                        <button class="platform-btn" data-url="https://example.com/download/ios">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+                            <span>iOS</span>
+                        </button>
+                        <button class="platform-btn" data-url="https://example.com/download/android">
+                            <!-- Android — официальный robot-логотип (Material Icons style) -->
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28"><path d="M17.523 15.341c-.5523 0-1-.4477-1-1s.4477-1 1-1 1 .4477 1 1-.4477 1-1 1m-11.046 0c-.5523 0-1-.4477-1-1s.4477-1 1-1 1 .4477 1 1-.4477 1-1 1m11.405-6.0271 1.997-3.4592a.4156.4156 0 0 0-.1521-.5676.4163.4163 0 0 0-.5676.1521l-2.0223 3.503C15.5902 7.2562 13.8533 6.8478 12 6.8478s-3.5902.4084-5.1377 1.0935L4.84 4.4383a.4163.4163 0 0 0-.5677-.1521.4158.4158 0 0 0-.1521.5676l1.9971 3.4592C2.6889 10.1813.3432 13.5862 0 17.5h24c-.3432-3.9138-2.6889-7.3187-6.118-9.1861"/></svg>
+                            <span>Android</span>
+                        </button>
+                        <button class="platform-btn" data-url="https://example.com/download/desktop">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="28" height="28"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                            <span>Windows / Mac</span>
+                        </button>
+                    </div>
+                </section>
+
+            </section>
+
+            <!-- ========================  Профиль ======================== -->
+            <section class="screen hidden" data-screen-id="profile">
+                <div class="profile-head">
+                    <div class="avatar">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                    <div class="profile-info">
+                        <div class="profile-name" id="profile-name">…</div>
+                        <div class="profile-id" id="profile-id">id: …</div>
+                    </div>
+                </div>
+
+                <section class="section" id="sub-link-section" hidden>
+                    <h3 class="section-title">Ваша ссылка на подписку</h3>
+                    <div class="sub-link-card">
+                        <div class="sub-link-value" id="sub-link-value"></div>
+                        <button class="sub-link-copy" id="sub-link-copy" aria-label="Копировать">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        </button>
+                    </div>
+                </section>
+
+                <!--
+                  Мои подписки. Секция появляется ТОЛЬКО когда подписок больше одной:
+                  человек с одним ключом не должен заметить, что в системе что-то изменилось.
+                -->
+                <section class="section" id="subs-section" hidden>
+                    <h3 class="section-title">Мои подписки</h3>
+                    <div class="subs-list" id="subs-list"></div>
+                    <p class="subs-note">Одновременно действует одна подписка.
+                        На остальных срок заморожен и не расходуется.
+                        Автопродление продлевает только действующую.</p>
+                </section>
+
+                <section class="section">
+                    <h3 class="section-title">Настройки профиля</h3>
+                    <div class="menu">
+                        <button class="menu-item" data-action="devices">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Мои устройства</b>
+                                <small id="profile-devices-status">подключённые устройства</small>
+                            </span>
+                        </button>
+                        <button class="menu-item" data-action="history">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>История операций</b>
+                                <small>Список платежей</small>
+                            </span>
+                        </button>
+                        <button class="menu-item" data-action="referral">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Реферальная программа</b>
+                                <small>Бонусы за приглашения</small>
+                            </span>
+                        </button>
+                        <button class="menu-item" data-action="email" id="profile-email-item">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Email</b>
+                                <small id="profile-email-status">не указан</small>
+                            </span>
+                        </button>
+                        <!-- Hidden по умолчанию. JS снимает hidden когда фича доступна
+                             (recurrentEnabled=true) ИЛИ у юзера уже есть привязанная карта
+                             (autorenewAvailable=true) — последнее покрывает кейс «фичу временно
+                             выключили, но юзер хочет управлять имеющейся подпиской». -->
+                        <button class="menu-item" data-action="autorenew" id="profile-autorenew-item" hidden>
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Автопродление</b>
+                                <small id="autorenew-status">…</small>
+                            </span>
+                        </button>
+                    </div>
+                </section>
+            </section>
+
+            <!-- ========================  Поддержка ====================== -->
+            <section class="screen hidden" data-screen-id="support">
+                <div class="hero">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                    </div>
+                    <h2>Поддержка</h2>
+                    <p class="status">@orchestra_support</p>
+                </div>
+
+                <section class="section">
+                    <div class="menu">
+                        <button class="menu-item" id="support-faq">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Частые вопросы</b>
+                                <small>Инструкции и решение проблем</small>
+                            </span>
+                        </button>
+                        <button class="menu-item" id="support-status">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Статус серверов</b>
+                                <small>Доступность серверов</small>
+                            </span>
+                        </button>
+                        <button class="menu-item" id="support-contact">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-7h3v5zM3 19a2 2 0 0 0 2 2h1v-7H3v5z"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Написать в поддержку</b>
+                                <small>@orchestra_support, отвечаем в течение часа</small>
+                            </span>
+                        </button>
+                        <!-- Канал с новостями — hidden если backend не отдал config.newsChannelUrl.
+                             Открываем через tg.openTelegramLink (т.к. это t.me-ссылка), иначе
+                             Telegram сначала уйдёт в браузер и закроет Mini App. -->
+                        <button class="menu-item" id="support-news" hidden>
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5zM19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Канал с новостями</b>
+                                <small>Обновления и анонсы сервиса</small>
+                            </span>
+                        </button>
+                        <button class="menu-item" id="support-terms">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Публичная оферта</b>
+                                <small>Правила сервиса</small>
+                            </span>
+                        </button>
+                    </div>
+                </section>
+            </section>
+
+            <!-- ========================  Sub-screen: Мои устройства ====================== -->
+            <section class="screen hidden" data-screen-id="devices" data-parent-screen-id="profile">
+                <button class="sub-back" data-back-to="profile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    <span>Профиль</span>
+                </button>
+
+                <div class="hero">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                    </div>
+                    <h2>Мои устройства</h2>
+                    <p class="status" id="devices-slots">…</p>
+                </div>
+
+                <section class="section">
+                    <div class="history-list" id="devices-list">
+                        <p class="empty-state">Загрузка…</p>
+                    </div>
+                    <p class="subs-note">
+                        Устройство появляется автоматически, когда добавляет подписку в приложение.
+                        Клиенты без поддержки HWID (v2rayN, Hiddify) в списке не видны.
+                        Кнопка «Имя» задаёт своё название («телефон мамы»).
+                    </p>
+                </section>
+
+                <!-- «Выйти со всех устройств»: перевыпуск подписочного токена. Старая ссылка
+                     умирает сразу на всех устройствах — подтверждение через tg.showConfirm. -->
+                <section class="section">
+                    <div class="menu">
+                        <!-- Докупка «+1 устройство»: показывается когда /api/devices.addon.available -->
+                        <button class="menu-item" id="devices-addon" hidden>
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Добавить устройство</b>
+                                <small id="devices-addon-price">до конца текущей подписки</small>
+                            </span>
+                        </button>
+                        <button class="menu-item" id="devices-rotate-link">
+                            <span class="menu-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                            </span>
+                            <span class="menu-label">
+                                <b>Сменить ссылку подписки</b>
+                                <small>Выход со всех устройств, если ссылка утекла</small>
+                            </span>
+                        </button>
+                    </div>
+                </section>
+            </section>
+
+            <!-- ========================  Sub-screen: История операций ====================== -->
+            <section class="screen hidden" data-screen-id="history" data-parent-screen-id="profile">
+                <button class="sub-back" data-back-to="profile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    <span>Профиль</span>
+                </button>
+
+                <div class="hero">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                    </div>
+                    <h2>История</h2>
+                    <p class="status">Все операции</p>
+                </div>
+
+                <section class="section">
+                    <div class="history-list" id="history-list">
+                        <p class="empty-state">Операций нет</p>
+                    </div>
+                </section>
+            </section>
+
+            <!-- ========================  Sub-screen: Реферальная программа ====================== -->
+            <section class="screen hidden" data-screen-id="referral" data-parent-screen-id="profile">
+                <button class="sub-back" data-back-to="profile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    <span>Профиль</span>
+                </button>
+
+                <div class="hero">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    </div>
+                    <h2>Реферальная программа</h2>
+                    <p class="status">Вам 14 дней, приглашённому 5</p>
+                </div>
+
+                <section class="section">
+                    <h3 class="section-title">Ваша реферальная ссылка</h3>
+                    <div class="sub-link-card">
+                        <div class="sub-link-value" id="ref-link-value">…</div>
+                        <button class="sub-link-copy" id="ref-link-copy" aria-label="Копировать">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                        </button>
+                    </div>
+                </section>
+
+                <section class="section">
+                    <h3 class="section-title">Статистика</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value" id="ref-invited">0</div>
+                            <div class="stat-card__label">приглашено</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="ref-rewarded">0</div>
+                            <div class="stat-card__label">купили</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value" id="ref-bonus-days">0</div>
+                            <div class="stat-card__label">дней бонус</div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="section">
+                    <!-- Обращение на «Вы» — как на остальных экранах: этот абзац оставался
+                         единственным местом в приложении, где сервис переходил на «ты». -->
+                    <p class="info-text">
+                        Отправьте ссылку другу. Когда он оплатит первую подписку,
+                        Вы получите 14 дней, а он 5. Награждаем до 10 друзей в месяц.
+                    </p>
+                </section>
+            </section>
+
+            <!-- ========================  Sub-screen: Автопродление ====================== -->
+            <section class="screen hidden" data-screen-id="autorenew-settings" data-parent-screen-id="profile">
+                <button class="sub-back" data-back-to="profile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    <span>Профиль</span>
+                </button>
+
+                <div class="hero">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                    </div>
+                    <h2>Автопродление</h2>
+                    <p class="status" id="autorenew-heading-status">…</p>
+                </div>
+
+                <!--
+                  Что именно спишется, когда и с какой подписки. До этого блока экран знал
+                  ровно одно слово — «включено»: ни суммы, ни даты, ни номера подписки. Бот всё
+                  это показывал, и два экрана про одну карту отвечали по-разному.
+                -->
+                <section class="section" id="autorenew-facts-section" hidden>
+                    <div class="facts" id="autorenew-facts"></div>
+                    <p class="facts__warn" id="autorenew-warn" hidden></p>
+                </section>
+
+                <section class="section">
+                    <p class="info-text" id="autorenew-info">
+                        При автопродлении за 24 часа до истечения подписка автоматически продлевается
+                        с привязанной карты. Отключить можно в любой момент.
+                    </p>
+                </section>
+
+                <button class="btn-primary" id="autorenew-toggle-btn">
+                    <span id="autorenew-toggle-label">Включить</span>
+                </button>
+            </section>
+
+            <!-- ========================  Sub-screen: Email ====================== -->
+            <section class="screen hidden" data-screen-id="email-settings" data-parent-screen-id="profile">
+                <button class="sub-back" data-back-to="profile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    <span>Профиль</span>
+                </button>
+
+                <div class="hero">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                    </div>
+                    <h2>Email</h2>
+                    <p class="status" id="email-heading-status">не указан</p>
+                </div>
+
+                <section class="section">
+                    <p class="info-text">
+                        Email нужен, чтобы восстановить доступ, если потеряете Telegram,
+                        и чтобы получать копию ссылки при продлении. Рассылок нет,
+                        удалить адрес можно в любой момент.
+                    </p>
+                </section>
+
+                <section class="section">
+                    <h3 class="section-title">Адрес</h3>
+                    <input type="email" class="email-input" id="email-input"
+                           placeholder="you@example.com" autocomplete="email"
+                           autocapitalize="none" spellcheck="false" inputmode="email">
+                    <p class="email-result" id="email-result" hidden></p>
+                </section>
+
+                <!-- Consent на обработку email (152-ФЗ). Hidden если email уже сохранён —
+                     юзер уже соглашался при первом save'е, на каждый re-open форма
+                     не должна переспрашивать. -->
+                <label class="email-consent" id="email-consent" hidden>
+                    <input type="checkbox" id="email-consent-checkbox">
+                    <span>
+                        Я согласен на обработку email в соответствии с
+                        <a href="#" id="email-consent-offer-link">офертой</a>
+                        (раздел «Конфиденциальность»). Можно отозвать кнопкой «Удалить email».
+                    </span>
+                </label>
+
+                <button class="btn-primary" id="email-save-btn">
+                    <span id="email-save-label">Сохранить</span>
+                </button>
+
+                <!--
+                  Magic-link login: шлёт письмо со ссылкой на /auth?token=... которое
+                  заводит юзера в web-ЛК. Видна только когда email сохранён — иначе
+                  отправлять некуда. Inline-result показывает «Письмо отправлено» /
+                  rate-limit-ошибки прямо под кнопкой.
+                -->
+                <button class="btn-secondary" id="email-send-link-btn" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    <span id="email-send-link-label">Войти в кабинет через браузер</span>
+                </button>
+                <p class="email-result" id="email-send-link-result" hidden></p>
+
+                <button class="btn-secondary" id="email-delete-btn" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span>Удалить email</span>
+                </button>
+            </section>
+
+            <!-- ========================  Sub-screen: Статус серверов ====================== -->
+            <section class="screen hidden" data-screen-id="servers" data-parent-screen-id="support">
+                <button class="sub-back" data-back-to="support">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    <span>Поддержка</span>
+                </button>
+
+                <div class="hero">
+                    <div class="hero-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                    </div>
+                    <h2>Статус серверов</h2>
+                    <p class="status">Доступность серверов прямо сейчас</p>
+                </div>
+
+                <section class="section">
+                    <div class="server-list" id="server-list">
+                        <p class="empty-state">Загрузка…</p>
+                    </div>
+                </section>
+
+                <button class="btn-secondary" id="server-refresh">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                    <span>Обновить</span>
+                </button>
+            </section>
+
+        </main>
+
+        <!--
+          Drawer подтверждения переключения подписки. Содержимое приезжает с сервера
+          (GET switch-preview), а не считается здесь: переключение меняет четыре вещи разом
+          (чьи дни идут, чьи замирают, какая ссылка рабочая, какие устройства отключатся),
+          и фронт, додумывающий это сам, рано или поздно начнёт обещать не то.
+        -->
+        <div class="drawer-backdrop" id="switch-backdrop" hidden></div>
+        <div class="drawer" id="switch-drawer" hidden role="dialog" aria-modal="true" aria-labelledby="switch-drawer-title">
+            <div class="drawer__handle"></div>
+            <div class="drawer__header">
+                <h3 id="switch-drawer-title">Включить подписку</h3>
+                <button class="drawer__close" id="switch-drawer-close" aria-label="Закрыть">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <ul class="switch-preview" id="switch-preview"></ul>
+            <p class="pay-devices-warn" id="switch-warn" hidden></p>
+            <button class="btn-primary" id="switch-confirm" hidden>
+                <span id="switch-confirm-label">Включить</span>
+            </button>
+        </div>
+
+        <!--
+          Payment drawer — выдвигается снизу при клике «Купить/Продлить».
+          Показывает 3 способа оплаты. Backdrop кликом закрывает. Hidden по умолчанию.
+        -->
+        <div class="drawer-backdrop" id="pay-backdrop" hidden></div>
+        <div class="drawer" id="pay-drawer" hidden role="dialog" aria-modal="true" aria-labelledby="pay-drawer-title">
+            <div class="drawer__handle"></div>
+            <div class="drawer__header">
+                <h3 id="pay-drawer-title">Способ оплаты</h3>
+                <button class="drawer__close" id="pay-drawer-close" aria-label="Закрыть">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="22" height="22"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <!-- Тариф слева, сумма справа: раньше их разделяла точка-разделитель,
+                 теперь разводит сама раскладка. -->
+            <p class="drawer__amount">
+                <span id="pay-drawer-plan">…</span>
+                <span class="drawer__amount-old" id="pay-drawer-amount-old" hidden></span>
+                <span class="drawer__amount-value" id="pay-drawer-amount">…</span>
+            </p>
+
+            <!-- Даунгрейд-предупреждение: активных устройств больше, чем даёт выбранная
+                 ступень — лишние отключатся после оплаты. Заполняется в openPayDrawer. -->
+            <p class="pay-devices-warn" id="pay-drawer-devices-warn" hidden></p>
+
+            <!--
+              Куда зачислятся деньги. Строка НЕ сворачивается, в отличие от промокода ниже:
+              цель платежа — это то, что человек обязан увидеть до оплаты, а не то, что он может
+              раскрыть по желанию. Вся строка скрыта, пока выбирать не из чего — у человека
+              с одной подпиской экран оплаты остаётся дореформенным.
+            -->
+            <div class="pay-target" id="pay-target-row" hidden>
+                <div class="pay-target__label">Куда зачислить оплату</div>
+                <div class="pay-target__options" id="pay-target-options"></div>
+                <p class="pay-target__hint" id="pay-target-hint" hidden></p>
+            </div>
+
+            <!--
+              Промокод. По дефолту свёрнут до ссылки «Есть промокод?». Клик раскрывает
+              input + кнопку «Применить». Валидация серверная через POST /api/promos/validate.
+              При успешном применении скидка отображается в drawer__amount и применяется
+              ко всем 3 способам оплаты ниже.
+            -->
+            <div class="promo" id="promo-block">
+                <button type="button" class="promo__toggle" id="promo-toggle">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                    <span>Есть промокод?</span>
+                </button>
+
+                <div class="promo__input-row" id="promo-input-row" hidden>
+                    <input type="text" class="promo__input" id="promo-input"
+                           placeholder="Введите код" autocomplete="off"
+                           autocapitalize="characters" spellcheck="false">
+                    <button type="button" class="promo__apply" id="promo-apply">Применить</button>
+                </div>
+
+                <!-- Сообщение результата: «−20%, итого 320 ₽» / «Промокод не найден» / etc. -->
+                <p class="promo__result" id="promo-result" hidden></p>
+            </div>
+
+            <!-- Чекбокс «С автопродлением» — gate'ится через config.recurrentEnabled.
+                 Применяется ТОЛЬКО к оплате «Картой» (Stars/Crypto не поддерживают
+                 рекуррент через нашего провайдера). При выбранной галке YooKassa
+                 сохранит payment_method, и за 24ч до истечения сработает автосписание.
+                 Hidden если фича выключена флагом — JS снимет hidden когда увидит true. -->
+            <div class="sub-toggle" id="pay-autorenew-toggle" hidden>
+                <label class="sub-toggle__label">
+                    <input type="checkbox" id="pay-autorenew-checkbox">
+                    <span class="sub-toggle__track"></span>
+                    <span class="sub-toggle__text">
+                        <b>С автопродлением</b>
+                        <small>Карта сохранится, подписка продлится за 24 часа до конца срока. Отключить можно в Профиле.</small>
+                    </span>
+                </label>
+            </div>
+
+            <div class="pay-methods">
+                <button class="pay-method" data-method="yookassa">
+                    <span class="pay-method__icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+                    </span>
+                    <span class="pay-method__body">
+                        <b>Картой</b>
+                        <small>Visa и МИР, через ЮKassa</small>
+                    </span>
+                    <span class="pay-method__arrow">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
+                    </span>
+                </button>
+                <button class="pay-method" data-method="stars">
+                    <span class="pay-method__icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7h7.1l-5.8 4.2 2.3 7-6-4.3-6 4.3 2.3-7L2.5 9h7.1z"/></svg>
+                    </span>
+                    <span class="pay-method__body">
+                        <b>Telegram Stars</b>
+                        <small>Без карты, внутри Telegram</small>
+                    </span>
+                    <span class="pay-method__arrow">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
+                    </span>
+                </button>
+                <button class="pay-method" data-method="cryptobot">
+                    <span class="pay-method__icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9.5a2.5 2.5 0 0 0-2.5-2.5h-1A2.5 2.5 0 0 0 9 9.5v5A2.5 2.5 0 0 0 11.5 17h1a2.5 2.5 0 0 0 2.5-2.5M12 4v3M12 17v3"/></svg>
+                    </span>
+                    <span class="pay-method__body">
+                        <b>Криптовалютой</b>
+                        <small>USDT, TON, BTC, ETH</small>
+                    </span>
+                    <span class="pay-method__arrow">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
+                    </span>
+                </button>
+            </div>
+
+            <p class="drawer__hint">
+                Оплата открывается в Telegram. После успеха подписка продлится автоматически.
+            </p>
+        </div>
+
+        <!--
+          Нижняя навигация. data-screen-id связан с секциями выше.
+          Подписи под иконками появились не для красоты: четыре силуэта без слов
+          приходилось узнавать методом тыка, а шестерёнка на экране «Как подключить»
+          читалась как настройки приложения.
+        -->
+        <nav class="bottom-nav">
+            <button class="nav-btn active" data-screen-id="home">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                <span>Главная</span>
+            </button>
+            <button class="nav-btn" data-screen-id="setup">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6M15 2v6M6 8h12l-1 7a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3L6 8zM12 18v4"/></svg>
+                <span>Подключить</span>
+            </button>
+            <button class="nav-btn" data-screen-id="profile">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <span>Профиль</span>
+            </button>
+            <button class="nav-btn" data-screen-id="support">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-7h3v5zM3 19a2 2 0 0 0 2 2h1v-7H3v5z"/></svg>
+                <span>Поддержка</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="script.js?v=40"></script>
+</body>
+</html>

@@ -1,0 +1,2183 @@
+/*
+  Orchestra Mini App — дизайн-система V3 «Quiet».
+
+  Что изменилось относительно V2 и почему:
+   1. Убран matrix-rain: бегущие буквы стояли ПОД текстом всего приложения и
+      конкурировали с ним. Вместо анимации — статичное свечение (.bg-dvd),
+      которое не перерисовывается ни разу за сессию.
+   2. Шрифты: Inter → Golos Text (кириллица родная, а не адаптированная),
+      IBM Plex Mono → JetBrains Mono, плюс Unbounded только на wordmark и
+      крупное число дней. Три размера — не три голоса: display используется
+      ровно в двух местах.
+   3. Все размеры/отступы/радиусы приведены к шкалам (см. токены ниже).
+      Раньше в файле было 12 кеглей и 9 радиусов — это и читалось как шум.
+   4. Границы сняты с большинства карточек: разделяет фон (--surface на --bg),
+      а не рамка. Рамка осталась там, где она несёт смысл — выбранное состояние,
+      предупреждение.
+   5. Зелёный — только у ОДНОГО действия на экране. Раньше акцент стоял на
+      кнопке покупки, баннере, галочке, LED, прогрессе и слове «Orchestra»
+      одновременно и перестал что-либо означать.
+   6. Контраст: --text-3 (бывший --text-dim #6e7681) давал 4.12:1 — ниже
+      порога WCAG AA 4.5:1, хотя в комментарии было написано обратное.
+      Сейчас 5.5:1 на фоне и 5.0:1 на карточке.
+*/
+
+:root {
+    /* ---- Поверхности -------------------------------------------------- */
+    --bg:            #0B0F14;   /* самый глубокий слой */
+    --surface:       #141A21;   /* карточки */
+    --surface-2:     #1C242E;   /* вложенные элементы внутри карточек */
+    --surface-3:     #232C38;   /* hover / нажатые состояния */
+    --line:          rgba(255, 255, 255, .06);
+    --line-strong:   rgba(255, 255, 255, .13);
+
+    /* ---- Текст (все проверены на AA ≥4.5:1 и по --bg, и по --surface) --- */
+    --text:          #EAF0F6;   /* 15.4:1 */
+    --text-2:        #A8B4C0;   /*  9.1:1 — подписи, вторичные строки */
+    --text-3:        #7E8B99;   /*  5.5:1 — мета, третий уровень */
+
+    /* ---- Акцент ------------------------------------------------------- */
+    --accent:        #3FB950;   /* 7.6:1 на --bg */
+    --accent-2:      #6FDB84;   /* светлее — для текста/иконок на тёмном */
+    --accent-tint:   rgba(63, 185, 80, .12);
+    --accent-line:   rgba(63, 185, 80, .38);
+    --accent-ink:    #06170C;   /* текст ПОВЕРХ зелёного */
+
+    --danger:        #FF8A80;
+    --danger-tint:   rgba(255, 138, 128, .12);
+
+    /* ---- Шкала отступов: 4, 8, 12, 16, 24, 32, 48 ---------------- */
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 24px;
+    --s-6: 32px;
+    --s-7: 48px;
+
+    /* ---- Шкала кеглей: 11, 12, 13, 15, 17, 20, 28, 40 ----------- */
+    --fs-1: 11px;
+    --fs-2: 12px;
+    --fs-3: 13px;
+    --fs-4: 15px;
+    --fs-5: 17px;
+    --fs-6: 20px;
+    --fs-7: 28px;
+    --fs-8: 40px;
+
+    /* ---- Радиусы: четыре, не девять ----------------------------------- */
+    --r-sm:   10px;
+    --r-md:   14px;
+    --r-lg:   20px;
+    --r-pill: 999px;
+
+    /* ---- Тени --------------------------------------------------------- */
+    --lift:      inset 0 1px 0 rgba(255, 255, 255, .045);
+    --shadow-2:  0 12px 32px -18px rgba(0, 0, 0, .9);
+
+    --font-body:    'Golos Text', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-display: 'Unbounded', 'Golos Text', ui-sans-serif, system-ui, sans-serif;
+    --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+    --ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+    font-size: var(--fs-4);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'tnum' 0;
+}
+
+/* Клавиатурная навигация должна быть видна: до этого фокус не рисовался нигде. */
+:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+}
+
+/* ==========================
+   Фон: свечение + дождь «ORCHESTRA»
+   ==========================
+   Колонки падающих букв приглушены относительно первой версии: было opacity
+   .09–.14 и проход экрана за 28–42 с, то есть они заметно двигались прямо под
+   читаемым текстом. Сейчас .07–.10 и 40–56 с — фактура, которую видно, когда на
+   неё смотришь, и которая не тянет взгляд, когда читаешь.
+   Колонки спавнит JS (script.js :: spawnRainColumns); при системной настройке
+   «меньше движения» он их не создаёт вовсе. */
+.bg-dvd {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+    background:
+        radial-gradient(90% 55% at 50% -8%,  rgba(63, 185, 80, .10) 0%, transparent 62%),
+        radial-gradient(80% 45% at 12% 104%, rgba(63, 185, 80, .05) 0%, transparent 60%);
+}
+
+.rain-col {
+    position: absolute;
+    top: -20%;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    color: var(--accent-2);
+    writing-mode: vertical-rl;
+    letter-spacing: .32em;
+    white-space: nowrap;
+    line-height: 1;
+    will-change: transform;
+    animation: rain-fall linear infinite;
+}
+
+@keyframes rain-fall {
+    from { transform: translateY(-100%); }
+    to   { transform: translateY(220vh); }
+}
+
+/* Виньетка: гасит колонки у верхнего и нижнего краёв, чтобы они не обрезались
+   резкой линией и не лезли под шапку и навигацию. */
+.bg-dvd::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, var(--bg) 0%, transparent 10%, transparent 90%, var(--bg) 100%);
+}
+
+/* ==========================
+   Каркас
+   ========================== */
+.app {
+    position: relative;
+    z-index: 2;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: var(--s-4) var(--s-4) 104px;  /* нижний отступ под фикс-навигацию */
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+}
+
+.header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-3);
+    padding-top: var(--s-1);
+}
+
+/* Брендовый wordmark слева — единственное место, где живёт display-шрифт
+   вместе с крупным числом дней. */
+.header::before {
+    content: "ORCHESTRA";
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: var(--fs-2);
+    letter-spacing: .14em;
+    color: var(--text);
+}
+
+.header h1 {
+    font-family: var(--font-mono);
+    font-size: var(--fs-1);
+    font-weight: 500;
+    letter-spacing: .1em;
+    color: var(--text-3);
+    text-transform: uppercase;
+}
+
+.screens { display: contents; }
+
+.screen {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+    animation: slidefade .3s var(--ease);
+}
+.screen.hidden { display: none; }
+
+@keyframes slidefade {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+}
+
+/* ==========================
+   Секции и заголовки
+   ==========================
+   Заголовок раньше был 11px серым — он не читался как заголовок и ничего не
+   группировал. Теперь это полноценная строка того же цвета, что и текст. */
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+}
+
+.section-title {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -.005em;
+    margin: 0;
+}
+
+.section-title b {
+    color: var(--accent-2);
+    font-weight: 600;
+}
+
+/* ==========================
+   Status card — главный герой экрана
+   ==========================
+   Единственный элемент приложения с градиентной подложкой и свечением: так
+   видно, что это ответ на вопрос «сколько у меня осталось», а не ещё одна
+   карточка из списка. */
+.status-card {
+    position: relative;
+    overflow: hidden;
+    background:
+        radial-gradient(120% 100% at 100% 0%, rgba(63, 185, 80, .14) 0%, transparent 58%),
+        var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift), var(--shadow-2);
+    padding: var(--s-5) var(--s-4) var(--s-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+}
+
+.stat-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    line-height: 1;
+}
+
+.led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-tint);
+    flex-shrink: 0;
+}
+.led.led--off {
+    background: var(--text-3);
+    box-shadow: none;
+}
+
+.stat-label {
+    font-size: var(--fs-2);
+    color: var(--text-2);
+    font-weight: 500;
+    letter-spacing: .02em;
+    text-transform: uppercase;
+}
+
+/* Число дней — крупно и display-шрифтом. Это то, ради чего экран открывают.
+   clamp: у Unbounded очень широкие знаки, и на 320px «14 дней» в 40px уже
+   не помещается в строку. */
+.stat-big {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 10vw, var(--fs-8));
+    font-weight: 700;
+    letter-spacing: -.03em;
+    line-height: 1.05;
+    color: var(--text);
+    font-feature-settings: 'tnum';
+}
+
+.stat-sub {
+    font-size: var(--fs-3);
+    color: var(--text-2);
+    margin-top: var(--s-2);
+}
+
+.progress {
+    height: 3px;
+    background: var(--line-strong);
+    border-radius: var(--r-pill);
+    overflow: hidden;
+    margin-top: var(--s-1);
+}
+.progress > i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    border-radius: var(--r-pill);
+    width: var(--progress, 50%);
+    transition: width .8s var(--ease);
+}
+
+/* Автопродление строкой в карточке статуса: сумма и дата списания — факт про
+   деньги, и место ему рядом со сроком, а не в разделе Профиля. */
+.stat-renew {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: var(--fs-2);
+    color: var(--text-2);
+    padding-top: var(--s-3);
+    border-top: 1px solid var(--line);
+}
+.stat-renew b { color: var(--text); font-weight: 600; }
+
+/* ==========================
+   Плашки-уведомления (email / «есть сохранённые дни»)
+   ==========================
+   Обе — про «обратите внимание», а не про «нажмите зелёное». Поэтому фон
+   нейтральный, а маркер смысла — тонкая полоса слева. */
+.rescue-banner,
+.email-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--lift);
+    padding: var(--s-3);
+}
+.rescue-banner { box-shadow: var(--lift), inset 3px 0 0 var(--accent); }
+.email-banner  { box-shadow: var(--lift), inset 3px 0 0 var(--text-3); }
+
+.rescue-banner__icon,
+.email-banner__icon {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--fs-4);
+    color: var(--text-2);
+}
+.rescue-banner__icon { color: var(--accent-2); }
+
+.rescue-banner__text,
+.email-banner__text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.35;
+}
+.rescue-banner__text b,
+.email-banner__text b {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+}
+.rescue-banner__text small,
+.email-banner__text small {
+    font-size: var(--fs-2);
+    color: var(--text-2);
+}
+
+/* CTA плашек — обводка, а не заливка: заливка зелёным есть только у главной
+   кнопки экрана, иначе взгляд не знает, куда идти первым. */
+.rescue-banner__cta,
+.email-banner__cta {
+    flex-shrink: 0;
+    background: transparent;
+    color: var(--accent-2);
+    border: 1px solid var(--accent-line);
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-sm);
+    font-family: var(--font-body);
+    font-size: var(--fs-2);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, transform .12s;
+}
+.rescue-banner__cta:hover,
+.email-banner__cta:hover { background: var(--accent-tint); border-color: var(--accent); }
+.rescue-banner__cta:active,
+.email-banner__cta:active { transform: scale(.97); }
+
+.email-banner__close {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: var(--text-3);
+    border: none;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: color .15s, background .15s;
+}
+.email-banner__close:hover { color: var(--text); background: var(--surface-2); }
+
+/* На 320px иконка, текст, кнопка и крестик в одну строку не помещаются — описание
+   сжималось до двух слов в строке. Кнопка уходит на свою строку во всю ширину. */
+@media (max-width: 380px) {
+    .rescue-banner,
+    .email-banner { flex-wrap: wrap; row-gap: var(--s-3); }
+    .rescue-banner__cta,
+    .email-banner__cta { order: 1; flex-basis: 100%; }
+}
+
+/* ==========================
+   Ссылка подписки
+   ==========================
+   Главное действие блока — «Скопировать». Сама строка ссылки — доказательство,
+   что копируется, а не то, что читают. */
+.sub-box {
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    padding: var(--s-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+}
+
+.sub-box__url {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    background: var(--bg);
+    border-radius: var(--r-sm);
+    padding: var(--s-2) var(--s-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-2);
+    color: var(--text-2);
+    overflow: hidden;
+}
+.sub-box__url svg { flex-shrink: 0; color: var(--text-3); }
+.sub-box__url span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sub-box__actions { display: flex; gap: var(--s-2); }
+
+.sub-action {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-2);
+    min-height: 44px;
+    background: var(--surface-2);
+    border: none;
+    color: var(--text);
+    border-radius: var(--r-sm);
+    padding: var(--s-3);
+    font-family: var(--font-body);
+    font-size: var(--fs-3);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, transform .12s;
+}
+.sub-action:hover  { background: var(--surface-3); }
+.sub-action:active { transform: scale(.98); }
+.sub-action--primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+}
+.sub-action--primary:hover { background: var(--accent-2); }
+
+/* Строка «обход встроен» под ссылкой — одна строка, а не абзац на три:
+   подробности переехали в раскрывающуюся подсказку рядом. */
+.sub-routing-note {
+    display: flex;
+    gap: var(--s-2);
+    align-items: flex-start;
+    padding: 0 var(--s-1);
+    font-size: var(--fs-2);
+    color: var(--text-2);
+}
+.sub-routing-note__icon {
+    flex-shrink: 0;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    height: 1.35em;   /* совпадает с высотой первой строки текста рядом */
+}
+.sub-routing-note .sub-toggle__text { gap: 0; }
+.sub-routing-note .sub-toggle__text b {
+    font-size: var(--fs-2);
+    font-weight: 600;
+    color: var(--text-2);
+}
+.sub-routing-note .sub-toggle__text small {
+    font-size: var(--fs-2);
+    color: var(--text-3);
+}
+
+/*
+ * Подсказка «поставьте приложение» под ссылкой подписки. Кнопка, а не ссылка-строка:
+ * это переход на другой экран, и он должен выглядеть нажимаемым. Акцентная заливка
+ * слабая — рядом уже есть главная кнопка «Скопировать ссылку», и спорить с ней нельзя.
+ */
+.sub-nudge {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    width: 100%;
+    padding: var(--s-3);
+    border: 1px solid var(--accent-line);
+    border-radius: var(--r-md);
+    background: var(--accent-tint);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: background .16s var(--ease), border-color .16s var(--ease);
+}
+.sub-nudge:active { background: var(--surface-3); }
+.sub-nudge__icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-sm);
+    background: var(--accent);
+    color: var(--accent-ink);
+}
+.sub-nudge__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sub-nudge__text b {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+}
+.sub-nudge__text small {
+    font-size: var(--fs-2);
+    color: var(--text-2);
+    line-height: 1.4;
+}
+.sub-nudge__go { flex-shrink: 0; display: flex; color: var(--accent-2); }
+
+/* Ссылка в профиле / реферальная ссылка */
+.sub-link-card {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--lift);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+}
+
+.sub-link-value {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: var(--fs-2);
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sub-link-copy {
+    background: var(--surface-2);
+    border: none;
+    color: var(--text);
+    border-radius: var(--r-sm);
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .15s;
+}
+.sub-link-copy:hover { background: var(--surface-3); }
+
+/* ==========================
+   Тумблер (чекбокс-как-switch)
+   ========================== */
+.sub-toggle {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--lift);
+    padding: var(--s-3);
+}
+
+.sub-toggle__label {
+    display: flex;
+    gap: var(--s-3);
+    align-items: flex-start;
+    cursor: pointer;
+}
+
+.sub-toggle__label input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.sub-toggle__track {
+    position: relative;
+    flex-shrink: 0;
+    width: 40px;
+    height: 24px;
+    border-radius: var(--r-pill);
+    background: var(--surface-3);
+    transition: background .2s;
+    margin-top: 1px;
+}
+.sub-toggle__track::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--text-2);
+    transition: transform .2s var(--ease), background .2s;
+}
+.sub-toggle__label input:checked + .sub-toggle__track { background: var(--accent); }
+.sub-toggle__label input:checked + .sub-toggle__track::after {
+    transform: translateX(16px);
+    background: var(--accent-ink);
+}
+.sub-toggle__label input:focus-visible + .sub-toggle__track {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+}
+
+.sub-toggle__text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.sub-toggle__text b {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+}
+.sub-toggle__text small {
+    font-size: var(--fs-2);
+    color: var(--text-2);
+    line-height: 1.45;
+}
+
+/* ==========================
+   Сервисы — две встречные полки логотипов
+   ==========================
+   Полки снова едут сами, но вдвое медленнее (20 и 17 px/с против 30 и 26):
+   на прежней скорости название успевало уехать раньше, чем его дочитывали, и
+   строка воспринималась мельтешением. На нынешней логотип держится в кадре
+   несколько секунд. При системной настройке «меньше движения» полка не едет, а
+   листается пальцем — см. .services-marquee--manual. */
+.services-section {
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    padding: var(--s-4) 0;
+    gap: var(--s-3);
+}
+.services-section .section-title { padding: 0 var(--s-4); }
+
+.services-sub {
+    font-size: var(--fs-2);
+    color: var(--text-3);
+    margin: calc(-1 * var(--s-2)) 0 0;
+    padding: 0 var(--s-4);
+}
+
+.services-marquee {
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 7%, #000 93%, transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 7%, #000 93%, transparent 100%);
+}
+
+/* Режим «листает человек»: включается, когда в системе выбрано «меньше
+   движения» — тогда JS марку не запускает и полка остаётся обычным скроллом. */
+.services-marquee--manual {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+}
+.services-marquee--manual::-webkit-scrollbar { display: none; }
+.services-marquee--manual .services-marquee__track { padding: 0 var(--s-4); }
+
+.services-marquee__track {
+    display: flex;
+    width: max-content;
+    /* Позицией управляет JS (script.js :: startMarquee) через RAF.
+       Чисто-CSS animation давала sub-pixel jitter и периодический «freeze»
+       на iOS Safari после перезапуска Mini App. */
+    will-change: transform;
+    transform: translate3d(0, 0, 0);
+    -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+}
+
+.service-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    background: var(--surface-2);
+    border-radius: var(--r-sm);
+    color: var(--text);
+    font-size: var(--fs-3);
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+    /* margin-right, а не gap на родителе: последний чипс тоже должен иметь
+       отступ, иначе на стыке первой и второй копии шаг между чипсами ломается
+       и петля становится заметной. */
+    margin-right: var(--s-2);
+}
+
+.service-chip__icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    object-fit: contain;
+}
+
+/* ==========================
+   Витрина покупки: ступени устройств + тарифы
+   ==========================
+   Сведены в одну карточку. До этого «Устройства» и «Тариф» были двумя разными
+   секциями с одинаковым оформлением, хотя это один выбор из двух частей —
+   и цена в тарифах пересчитывается ступенью прямо над ними. */
+.buy-card {
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    padding: var(--s-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+}
+.buy-card__group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+}
+.buy-card__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-2);
+}
+.buy-card__label {
+    font-size: var(--fs-2);
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+/* Полное имя выбранной ступени. Живёт в строке заголовка, а не отдельной строкой —
+   так оно не добавляет блоку ни пикселя высоты. */
+.buy-card__value {
+    font-size: var(--fs-2);
+    font-weight: 600;
+    color: var(--text-2);
+    text-align: right;
+    min-width: 0;
+}
+
+/* Ступени — одна строка компактных чипсов с числами. Полными подписями
+   («1 устройство», «Семейная ×10») пять чипсов занимали три ряда и 148px —
+   треть всего блока покупки. Слово «устройств» стоит один раз в заголовке
+   строки, имя выбранной ступени — справа от него (.buy-card__value).
+   flex-wrap оставлен на случай, если /api/pricing вернёт больше пяти ступеней. */
+.device-tiers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+}
+
+.device-tier-chip {
+    position: relative;
+    flex: 1 1 44px;
+    min-width: 0;
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: var(--r-sm);
+    padding: var(--s-2) var(--s-1);
+    min-height: 40px;
+    text-align: center;
+    font-family: var(--font-body);
+    font-size: var(--fs-4);
+    font-weight: 600;
+    font-feature-settings: 'tnum';
+    color: var(--text-2);
+    cursor: pointer;
+    transition: border-color .18s, background .18s, color .18s, transform .12s;
+}
+.device-tier-chip:hover  { background: var(--surface-3); }
+.device-tier-chip:active { transform: scale(.94); }
+
+.device-tier-chip.selected {
+    border-color: var(--accent);
+    background: var(--accent-tint);
+    color: var(--text);
+}
+
+/* «Популярная» ступень помечается точкой, а не звёздочкой в тексте: звёздочка
+   попадала внутрь строки и ломала её ритм. */
+.device-tier-chip[data-popular]::after {
+    content: "";
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+
+/* Тарифы — сетка 2×2. Четыре строки во всю ширину занимали 279px: до кнопки
+   оплаты приходилось листать, хотя выбор из четырёх пунктов должен помещаться
+   в один взгляд. Нечётный последний тариф занимает строку целиком — прайс из
+   3 или 5 планов (их отдаёт /api/pricing) тоже остаётся ровным.
+   row-gap больше column-gap: между рядами проходит лента «Популярный». */
+.tariffs {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    column-gap: var(--s-2);
+    row-gap: var(--s-4);
+    padding-top: var(--s-1);
+}
+.tariffs > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+.tariff-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    padding: var(--s-3) var(--s-3) var(--s-2);
+    font-family: var(--font-body);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .18s, background .18s, transform .12s;
+}
+.tariff-card:hover  { background: var(--surface-3); }
+.tariff-card:active { transform: scale(.98); }
+
+/* Выбранное состояние без радио-кружка: в узкой карточке он занимал строку
+   заголовка. Рамка + подложка + акцентная цена не оставляют двусмысленности —
+   подсвечена ровно одна карточка из четырёх. */
+.tariff-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-tint);
+}
+.tariff-card.selected .tariff-card__title { color: var(--text); }
+.tariff-card.selected .tariff-card__price { color: var(--accent-2); }
+
+@keyframes radio-pop {
+    from { transform: scale(0); }
+    to   { transform: scale(1); }
+}
+
+.tariff-card__title {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text-2);
+}
+.tariff-card__per-month {
+    font-size: var(--fs-1);
+    color: var(--text-3);
+    font-feature-settings: 'tnum';
+    white-space: nowrap;
+}
+
+/* Метка «Популярный» — лентой поверх верхней границы своей карточки. Обводкой,
+   а не заливкой: залитая зелёным она конкурировала бы с кнопкой оплаты. */
+.tariff-card__pop {
+    position: absolute;
+    top: 0;
+    left: var(--s-3);
+    transform: translateY(-50%);
+    font-size: var(--fs-1);
+    font-weight: 600;
+    line-height: 1;
+    color: var(--accent-2);
+    background: var(--surface);
+    border: 1px solid var(--accent-line);
+    padding: 3px var(--s-2);
+    border-radius: var(--r-pill);
+    letter-spacing: .01em;
+    white-space: nowrap;
+}
+
+.tariff-card__price {
+    font-size: var(--fs-6);
+    font-weight: 700;
+    color: var(--text);
+    font-feature-settings: 'tnum';
+    letter-spacing: -.02em;
+    line-height: 1.2;
+}
+
+/* ==========================
+   Кнопки
+   ========================== */
+.btn-primary {
+    display: flex;
+    align-items: center;
+    /* По умолчанию подпись по центру: у большинства кнопок внутри один <span>,
+       и при space-between он прижимался к левому краю. Цена в кнопке покупки
+       разводит содержимое по краям — но только когда срок уже выбран. */
+    justify-content: center;
+    gap: var(--s-3);
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: none;
+    min-height: 52px;
+    padding: var(--s-3) var(--s-4);
+    border-radius: var(--r-md);
+    font-family: var(--font-body);
+    font-size: var(--fs-4);
+    font-weight: 700;
+    letter-spacing: -.005em;
+    cursor: pointer;
+    transition: background .15s, transform .12s;
+}
+.btn-primary:hover  { background: var(--accent-2); }
+.btn-primary:active { transform: scale(.99); }
+.btn-primary:disabled,
+.btn-primary[disabled] {
+    background: var(--surface-2);
+    color: var(--text-3);
+    cursor: not-allowed;
+}
+.btn-primary[disabled]:active { transform: none; }
+
+/* Тихий вариант главной кнопки: та же геометрия, но без зелёной заливки. Для
+   действий вида «Отключить автопродление» — отказ от услуги не должен выглядеть
+   приглашением, а рядом с ним никакой другой кнопки на экране нет. */
+.btn-primary.btn-quiet {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--lift);
+}
+.btn-primary.btn-quiet:hover { background: var(--surface-2); }
+
+#buy-btn:not(:disabled) { justify-content: space-between; }
+#buy-btn-label { font-size: var(--fs-4); font-weight: 700; }
+
+.btn-secondary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-2);
+    background: var(--surface);
+    color: var(--text);
+    border: none;
+    box-shadow: var(--lift);
+    min-height: 48px;
+    padding: var(--s-3) var(--s-4);
+    border-radius: var(--r-md);
+    font-family: var(--font-body);
+    font-size: var(--fs-3);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, transform .12s;
+}
+.btn-secondary:hover  { background: var(--surface-2); }
+.btn-secondary:active { transform: scale(.99); }
+.btn-secondary svg { color: var(--text-3); }
+
+.price-group {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-2);
+    font-feature-settings: 'tnum';
+}
+.price-new {
+    font-size: var(--fs-5);
+    font-weight: 700;
+    letter-spacing: -.01em;
+}
+
+/* is-busy — ожидание сети. Тонкий блик вместо «нажал в пустоту». */
+.btn-primary.is-busy,
+.btn-secondary.is-busy {
+    position: relative;
+    overflow: hidden;
+}
+.btn-primary.is-busy::after,
+.btn-secondary.is-busy::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, .14) 50%, transparent 100%);
+    animation: btn-shimmer 1.2s linear infinite;
+    pointer-events: none;
+}
+@keyframes btn-shimmer {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(100%); }
+}
+
+/* ==========================
+   Нижняя навигация
+   ==========================
+   Иконки получили подписи: четыре силуэта без слов приходилось узнавать
+   методом тыка, а «шестерёнка» для экрана подключения читалась как настройки. */
+.bottom-nav {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 0;
+    width: 100%;
+    max-width: 480px;
+    display: flex;
+    justify-content: space-around;
+    align-items: stretch;
+    background: rgba(11, 15, 20, .88);
+    -webkit-backdrop-filter: blur(16px);
+            backdrop-filter: blur(16px);
+    border-top: 1px solid var(--line);
+    z-index: 5;
+    padding: var(--s-2) var(--s-2) calc(var(--s-2) + env(safe-area-inset-bottom, 0px));
+}
+
+.nav-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: var(--text-3);
+    cursor: pointer;
+    padding: var(--s-2) var(--s-1);
+    border-radius: var(--r-md);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-1);
+    font-family: var(--font-body);
+    font-size: var(--fs-1);
+    font-weight: 500;
+    transition: color .15s, background .15s;
+}
+.nav-btn span { line-height: 1; }
+.nav-btn:hover  { color: var(--text-2); }
+.nav-btn.active { color: var(--accent); background: var(--accent-tint); }
+.nav-btn svg { width: 22px; height: 22px; }
+
+/* ==========================
+   Экран «Как подключить»
+   ========================== */
+.screen-header {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+}
+
+.screen-header__icon {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--r-md);
+    background: var(--surface);
+    box-shadow: var(--lift);
+    color: var(--accent-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.screen-header__icon svg { width: 22px; height: 22px; }
+
+.screen-header__title {
+    font-size: var(--fs-6);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    color: var(--text);
+}
+.screen-header__sub {
+    font-size: var(--fs-2);
+    color: var(--text-3);
+    margin-top: 2px;
+}
+
+/* Шаги — одной карточкой со сквозной линией: три отдельные карточки читались
+   как три независимых объекта, а это одна последовательность. */
+.steps {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    padding: 0;
+    overflow: hidden;
+}
+
+.steps li {
+    display: flex;
+    gap: var(--s-3);
+    align-items: center;
+    padding: var(--s-4);
+    border-bottom: 1px solid var(--line);
+}
+.steps li:last-child { border-bottom: none; }
+
+.steps li b {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-tint);
+    color: var(--accent-2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-2);
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.steps li span {
+    flex: 1;
+    font-size: var(--fs-3);
+    line-height: 1.5;
+    color: var(--text);
+}
+
+.platforms {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-2);
+}
+
+.platform-btn {
+    background: var(--surface);
+    border: none;
+    box-shadow: var(--lift);
+    border-radius: var(--r-md);
+    padding: var(--s-4) var(--s-2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s-2);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: var(--fs-2);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s, transform .12s;
+}
+.platform-btn:hover  { background: var(--surface-2); }
+.platform-btn:active { transform: scale(.97); }
+.platform-btn svg { color: var(--text-2); }
+
+/* ==========================
+   Профиль
+   ========================== */
+.profile-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    padding: var(--s-4);
+}
+
+.avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(140deg, var(--accent-2), #1F6B3A);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-ink);
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.avatar svg { width: 24px; height: 24px; }
+.avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+}
+
+.profile-info { flex: 1; min-width: 0; }
+.profile-name {
+    font-size: var(--fs-5);
+    font-weight: 600;
+    letter-spacing: -.01em;
+    color: var(--text);
+}
+.profile-id {
+    font-size: var(--fs-2);
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    margin-top: 2px;
+}
+
+/* ==========================
+   Меню (списки в Профиле / Поддержке)
+   ========================== */
+.menu {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    overflow: hidden;
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: 56px;
+    padding: var(--s-3) var(--s-4);
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    transition: background .15s;
+    font-family: var(--font-body);
+}
+.menu-item:last-child { border-bottom: none; }
+.menu-item:hover { background: var(--surface-2); }
+
+.menu-icon {
+    width: 22px;
+    height: 22px;
+    color: var(--text-2);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.menu-icon svg { width: 22px; height: 22px; stroke-width: 1.6; }
+
+.menu-label {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.menu-label b {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+    display: block;
+}
+.menu-label small {
+    font-size: var(--fs-2);
+    color: var(--text-3);
+    display: block;
+    margin-top: 1px;
+}
+
+.menu-item::after {
+    content: "›";
+    color: var(--text-3);
+    font-size: var(--fs-6);
+    line-height: 1;
+    margin-left: var(--s-1);
+}
+
+/* ==========================
+   Шапка подэкранов
+   ==========================
+   Бывший .hero: круглая иконка по центру + заголовок. Выровнен по левому краю —
+   центрированный блок на каждом подэкране сбивал вертикальный ритм страницы. */
+.hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    text-align: left;
+}
+
+.hero-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--r-md);
+    background: var(--surface);
+    box-shadow: var(--lift);
+    color: var(--accent-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: var(--s-2);
+}
+.hero-icon svg { width: 22px; height: 22px; }
+
+.hero h2 {
+    margin: 0;
+    font-size: var(--fs-6);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    color: var(--text);
+}
+.hero p, .hero .status {
+    margin: 0;
+    color: var(--text-3);
+    font-size: var(--fs-3);
+}
+
+.sub-back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    background: none;
+    border: none;
+    color: var(--text-3);
+    cursor: pointer;
+    padding: var(--s-2) 0;
+    font-family: var(--font-body);
+    font-size: var(--fs-3);
+    align-self: flex-start;
+    transition: color .15s;
+}
+.sub-back:hover { color: var(--text); }
+.sub-back svg { stroke-width: 1.8; }
+
+/* ==========================
+   Списки: история, устройства
+   ========================== */
+.history-list {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    overflow: hidden;
+}
+
+.history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--line);
+    padding: var(--s-3) var(--s-4);
+    gap: var(--s-3);
+}
+.history-item:last-child { border-bottom: none; }
+
+.history-item__main { flex: 1; min-width: 0; }
+
+.history-item__plan {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 2px;
+}
+
+.history-item__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    flex-wrap: wrap;
+    font-size: var(--fs-2);
+    color: var(--text-3);
+}
+
+.history-item__amount {
+    font-size: var(--fs-4);
+    font-weight: 700;
+    color: var(--text);
+    font-feature-settings: 'tnum';
+    flex-shrink: 0;
+}
+
+.status-tag {
+    font-size: var(--fs-1);
+    font-weight: 600;
+    padding: 2px var(--s-2);
+    border-radius: var(--r-pill);
+    letter-spacing: .02em;
+}
+.status-tag--ok       { background: var(--accent-tint); color: var(--accent-2); }
+.status-tag--pending  { background: var(--surface-3);   color: var(--text-2); }
+.status-tag--fail     { background: var(--danger-tint); color: var(--danger); }
+.status-tag--refunded { background: var(--danger-tint); color: var(--danger); }
+
+/* Список устройств переиспользует разметку истории платежей, но у него в строке
+   ДВЕ кнопки, и на узком экране они сжимали описание устройства до трёх строк.
+   Кнопки уезжают на свою строку под описанием и прижимаются вправо. */
+#devices-list .history-item { flex-wrap: wrap; row-gap: var(--s-2); }
+#devices-list .history-item__main { flex-basis: 100%; }
+#devices-list .device-action:first-of-type { margin-left: auto; }
+
+/* Строка переименования устройства */
+.device-rename-row {
+    display: flex;
+    gap: var(--s-2);
+    padding: 0 var(--s-4) var(--s-3);
+}
+.device-rename-row input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    padding: var(--s-2) var(--s-3);
+    font-family: var(--font-body);
+    font-size: var(--fs-4);
+    color: var(--text);
+    min-width: 0;
+}
+.device-rename-row input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.device-action {
+    background: var(--surface-2);
+    border: none;
+    border-radius: var(--r-sm);
+    padding: var(--s-2) var(--s-3);
+    min-height: 34px;
+    font-family: var(--font-body);
+    font-size: var(--fs-2);
+    font-weight: 500;
+    color: var(--text-2);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background .15s, color .15s, transform .12s;
+}
+.device-action:hover     { background: var(--surface-3); color: var(--text); }
+.device-action:active    { transform: scale(.96); }
+.device-action[disabled] { opacity: .5; }
+
+/* ==========================
+   Реферальная статистика
+   ========================== */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-2);
+}
+
+.stat-card {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--lift);
+    padding: var(--s-4) var(--s-2);
+    text-align: center;
+}
+
+.stat-value {
+    font-family: var(--font-display);
+    font-size: var(--fs-7);
+    font-weight: 700;
+    color: var(--text);
+    font-feature-settings: 'tnum';
+    line-height: 1;
+    letter-spacing: -.03em;
+}
+
+.stat-card__label {
+    font-size: var(--fs-1);
+    color: var(--text-3);
+    margin-top: var(--s-2);
+    letter-spacing: .03em;
+}
+
+.empty-state {
+    text-align: center;
+    color: var(--text-3);
+    font-size: var(--fs-3);
+    padding: var(--s-6) var(--s-3);
+}
+
+.info-text {
+    font-size: var(--fs-3);
+    color: var(--text-2);
+    line-height: 1.55;
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--lift);
+    padding: var(--s-3) var(--s-4);
+}
+
+/* Список «поле — значение» */
+.facts {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--lift);
+    overflow: hidden;
+}
+.facts__row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--line);
+    font-size: var(--fs-3);
+}
+.facts__row:last-child { border-bottom: none; }
+.facts__key { color: var(--text-3); flex-shrink: 0; font-size: var(--fs-2); }
+.facts__val { color: var(--text); font-weight: 600; text-align: right; min-width: 0; }
+.facts__warn,
+.pay-devices-warn {
+    margin-top: var(--s-3);
+    padding: var(--s-3);
+    font-size: var(--fs-2);
+    line-height: 1.5;
+    color: var(--danger);
+    background: var(--danger-tint);
+    border-radius: var(--r-md);
+}
+.pay-devices-warn { margin: var(--s-3) 0; }
+
+/* ==========================
+   Прокси для Telegram / статус серверов
+   ========================== */
+.proxy-list,
+.server-list {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    overflow: hidden;
+}
+
+.proxy-item,
+.server-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    width: 100%;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    min-height: 60px;
+    padding: var(--s-3) var(--s-4);
+    color: inherit;
+    font-family: var(--font-body);
+    text-align: left;
+    transition: background .15s;
+}
+.proxy-item:last-child,
+.server-item:last-child { border-bottom: none; }
+.proxy-item { cursor: pointer; }
+.proxy-item:hover { background: var(--surface-2); }
+
+.proxy-item__flag,
+.server-item__flag {
+    font-size: var(--fs-6);
+    line-height: 1;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+    flex-shrink: 0;
+}
+
+.proxy-item__main,
+.server-item__body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.proxy-item__main b,
+.server-item__name {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+}
+.proxy-item__main small,
+.server-item__meta {
+    font-size: var(--fs-2);
+    color: var(--text-3);
+    font-family: var(--font-mono);
+}
+.server-item__meta { font-family: var(--font-body); }
+
+.proxy-item__arrow { color: var(--text-3); flex-shrink: 0; }
+
+.server-item__status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: var(--fs-2);
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.server-item__status--online  { color: var(--accent-2); }
+.server-item__status--offline { color: var(--danger); }
+/* «Нет данных» — мониторинг не ответил. Серым, а не красным: это не про ноду. */
+.server-item__status--unknown { color: var(--text-3); }
+
+.server-item__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.server-item__dot--online  { background: var(--accent); }
+.server-item__dot--offline { background: var(--danger); }
+.server-item__dot--unknown { background: var(--text-3); }
+
+/* ==========================
+   Drawer (оплата / переключение подписки)
+   ========================== */
+.drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .6);
+    -webkit-backdrop-filter: blur(2px);
+            backdrop-filter: blur(2px);
+    z-index: 9;
+    opacity: 0;
+    transition: opacity .25s;
+}
+.drawer-backdrop.open { opacity: 1; }
+
+.drawer {
+    position: fixed;
+    left: 50%;
+    bottom: 0;
+    transform: translate(-50%, 100%);
+    width: 100%;
+    max-width: 480px;
+    background: var(--surface);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    padding: var(--s-3) var(--s-4) var(--s-6);
+    z-index: 10;
+    transition: transform .32s var(--ease);
+    /* Прокрутка внутри drawer нужна на iOS при открытой клавиатуре: поле
+       промокода уезжает за клавиатуру, и без overflow-y его не «достать». */
+    max-height: 88vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(var(--s-6) + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -20px 60px -20px rgba(0, 0, 0, .9);
+}
+.drawer.open { transform: translate(-50%, 0); }
+
+.drawer__handle {
+    width: 36px;
+    height: 4px;
+    background: var(--line-strong);
+    border-radius: var(--r-pill);
+    margin: 0 auto var(--s-4);
+}
+
+.drawer__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--s-2);
+}
+
+.drawer__header h3 {
+    margin: 0;
+    font-size: var(--fs-5);
+    font-weight: 700;
+    letter-spacing: -.01em;
+    color: var(--text);
+}
+
+.drawer__close {
+    background: none;
+    border: none;
+    color: var(--text-3);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--r-sm);
+    transition: color .15s, background .15s;
+}
+.drawer__close:hover { color: var(--text); background: var(--surface-2); }
+
+.drawer__amount {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-2);
+    margin: 0 0 var(--s-4);
+    font-size: var(--fs-3);
+    color: var(--text-3);
+}
+#pay-drawer-plan { flex: 1; min-width: 0; }
+.drawer__amount-old {
+    color: var(--text-3);
+    font-weight: 500;
+    text-decoration: line-through;
+    font-feature-settings: 'tnum';
+}
+.drawer__amount-value {
+    color: var(--text);
+    font-weight: 700;
+    font-size: var(--fs-6);
+    letter-spacing: -.02em;
+    font-feature-settings: 'tnum';
+}
+
+.drawer .sub-toggle { margin-bottom: var(--s-4); background: var(--surface-2); box-shadow: none; }
+
+/* ---- Промокод ---- */
+.promo { margin-bottom: var(--s-4); }
+
+.promo__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    background: transparent;
+    border: none;
+    color: var(--accent-2);
+    font-family: var(--font-body);
+    font-size: var(--fs-3);
+    font-weight: 500;
+    padding: var(--s-2) 0;
+    cursor: pointer;
+    transition: color .15s;
+}
+.promo__toggle:hover { color: var(--accent); }
+.promo__toggle svg { opacity: .85; }
+.promo--applied .promo__toggle { display: none; }
+
+.promo__input-row {
+    display: flex;
+    gap: var(--s-2);
+    align-items: stretch;
+}
+
+.promo__input {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    color: var(--text);
+    font-family: var(--font-mono);
+    /* 16px — минимум для iOS Safari, иначе при фокусе страница «приближается». */
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    padding: var(--s-3);
+    transition: border-color .15s, box-shadow .15s;
+}
+.promo__input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.promo__input::placeholder {
+    color: var(--text-3);
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--font-body);
+}
+
+.promo__apply {
+    background: var(--surface-3);
+    border: none;
+    border-radius: var(--r-sm);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: var(--fs-3);
+    font-weight: 600;
+    padding: 0 var(--s-4);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s;
+}
+.promo__apply:hover    { background: var(--accent); color: var(--accent-ink); }
+.promo__apply:disabled { opacity: .5; cursor: progress; }
+
+.promo__result {
+    margin-top: var(--s-2);
+    font-size: var(--fs-2);
+    line-height: 1.4;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+}
+.promo__result--ok    { color: var(--accent-2); font-weight: 600; }
+.promo__result--error { color: var(--danger); }
+.promo__result-clear {
+    background: transparent;
+    border: none;
+    color: var(--text-3);
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: var(--fs-2);
+    padding: 0 0 0 var(--s-2);
+    text-decoration: underline;
+}
+.promo__result-clear:hover { color: var(--text); }
+
+/* ---- Способы оплаты ---- */
+.pay-methods {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    margin-bottom: var(--s-4);
+}
+
+.pay-method {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: 60px;
+    padding: var(--s-3);
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    cursor: pointer;
+    color: var(--text);
+    font-family: var(--font-body);
+    text-align: left;
+    transition: background .15s, border-color .15s;
+}
+.pay-method:hover    { background: var(--surface-3); border-color: var(--line-strong); }
+.pay-method:disabled { opacity: .5; cursor: not-allowed; }
+
+.pay-method__icon {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--r-sm);
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-2);
+    flex-shrink: 0;
+}
+.pay-method__icon svg { width: 18px; height: 18px; }
+
+.pay-method__body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.pay-method__body b {
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+}
+.pay-method__body small {
+    font-size: var(--fs-2);
+    color: var(--text-3);
+    margin-top: 1px;
+}
+
+.pay-method__arrow { color: var(--text-3); flex-shrink: 0; }
+
+.drawer__hint {
+    margin: 0;
+    font-size: var(--fs-2);
+    color: var(--text-3);
+    line-height: 1.5;
+    text-align: center;
+}
+
+/* ==========================
+   Email
+   ========================== */
+.email-input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    color: var(--text);
+    padding: var(--s-3) var(--s-4);
+    border-radius: var(--r-md);
+    font-family: var(--font-body);
+    font-size: 16px;
+    transition: border-color .15s, box-shadow .15s;
+}
+.email-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.email-input::placeholder { color: var(--text-3); }
+
+.email-result {
+    margin: var(--s-3) 0 0;
+    font-size: var(--fs-3);
+    line-height: 1.4;
+}
+.email-result--ok  { color: var(--accent-2); }
+.email-result--err { color: var(--danger); }
+
+.email-consent {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-3);
+    margin: 0;
+    padding: var(--s-3) var(--s-4);
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--lift);
+    font-size: var(--fs-2);
+    line-height: 1.5;
+    color: var(--text-2);
+    cursor: pointer;
+}
+.email-consent input[type="checkbox"] {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.email-consent a {
+    color: var(--accent-2);
+    text-decoration: underline;
+}
+
+/* ==========================
+   Мои подписки + подтверждение переключения
+   ========================== */
+.subs-list {
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--lift);
+    overflow: hidden;
+}
+
+.sub-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--line);
+}
+.sub-item:last-child { border-bottom: none; }
+/* Работающая подписка подсвечена полосой слева И фоном: главный вопрос к этому
+   списку — «какая из них сейчас рабочая», и отвечать должна вёрстка. */
+.sub-item--current {
+    box-shadow: inset 3px 0 0 var(--accent);
+    background: var(--accent-tint);
+}
+
+.sub-item__body { flex: 1; min-width: 0; }
+.sub-item__title {
+    font-size: var(--fs-4);
+    font-weight: 600;
+    color: var(--text);
+}
+.sub-item__state {
+    margin-top: 2px;
+    font-size: var(--fs-2);
+    color: var(--text-3);
+}
+
+/* Бейджи состояния — словами, а не значком: значок ▶️/⏸ читается как кнопка. */
+.sub-item__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1);
+    margin-top: var(--s-2);
+}
+.sub-badge {
+    font-size: var(--fs-1);
+    font-weight: 600;
+    line-height: 1;
+    padding: var(--s-1) var(--s-2);
+    border-radius: var(--r-pill);
+    border: 1px solid var(--line-strong);
+    color: var(--text-3);
+    white-space: nowrap;
+}
+.sub-badge--live  { border-color: var(--accent-line); color: var(--accent-2); }
+.sub-badge--renew { border-color: var(--line-strong); color: var(--text-2); }
+.sub-badge--dead  { border-color: var(--danger); color: var(--danger); }
+
+.sub-item__go {
+    flex-shrink: 0;
+    background: var(--surface-2);
+    border: none;
+    color: var(--text);
+    border-radius: var(--r-pill);
+    min-height: 36px;
+    padding: var(--s-2) var(--s-4);
+    font-family: var(--font-body);
+    font-size: var(--fs-3);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, transform .1s;
+}
+.sub-item__go:hover    { background: var(--surface-3); }
+.sub-item__go:active   { transform: scale(.97); }
+.sub-item__go:disabled { opacity: .5; cursor: default; }
+
+.subs-note {
+    margin: 0;
+    font-size: var(--fs-2);
+    line-height: 1.5;
+    color: var(--text-3);
+}
+
+.switch-preview {
+    list-style: none;
+    margin: var(--s-3) 0 var(--s-4);
+    padding: 0;
+}
+.switch-preview li {
+    position: relative;
+    padding: 0 0 0 var(--s-4);
+    margin-bottom: var(--s-2);
+    font-size: var(--fs-3);
+    line-height: 1.5;
+    color: var(--text-2);
+}
+.switch-preview li::before {
+    content: "";
+    position: absolute;
+    left: var(--s-1);
+    top: .55em;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+.switch-preview li:last-child { margin-bottom: 0; }
+.switch-preview li b { font-weight: 600; color: var(--text); }
+.switch-preview li.switch-preview__note {
+    padding-left: 0;
+    color: var(--text-3);
+    font-size: var(--fs-2);
+}
+.switch-preview li.switch-preview__note::before { content: none; }
+
+/* Кнопка подтверждения — во всю ширину drawer'а. */
+#switch-confirm {
+    width: 100%;
+    justify-content: center;
+    margin-top: var(--s-1);
+}
+
+/* ==========================
+   Цель платежа в pay-drawer
+   ========================== */
+.pay-target {
+    margin: 0 0 var(--s-4);
+    padding: var(--s-3);
+    background: var(--bg);
+    border-radius: var(--r-md);
+}
+.pay-target__label {
+    font-size: var(--fs-2);
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    margin-bottom: var(--s-2);
+}
+.pay-target__options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+}
+.pay-target__option {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    width: 100%;
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid transparent;
+    color: var(--text-2);
+    border-radius: var(--r-md);
+    padding: var(--s-3);
+    font-family: var(--font-body);
+    font-size: var(--fs-3);
+    cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+}
+.pay-target__option:active { transform: scale(.99); }
+.pay-target__option.selected {
+    border-color: var(--accent);
+    background: var(--accent-tint);
+    color: var(--text);
+}
+.pay-target__radio {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 50%;
+    position: relative;
+    transition: border-color .18s;
+}
+.pay-target__option.selected .pay-target__radio { border-color: var(--accent); }
+.pay-target__option.selected .pay-target__radio::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: radio-pop .25s var(--ease);
+}
+.pay-target__text { min-width: 0; }
+.pay-target__option b {
+    display: block;
+    font-size: var(--fs-3);
+    font-weight: 600;
+    color: var(--text);
+}
+.pay-target__option small {
+    display: block;
+    font-size: var(--fs-2);
+    font-weight: 400;
+    color: var(--text-3);
+    margin-top: 1px;
+}
+.pay-target__hint {
+    margin-top: var(--s-2);
+    font-size: var(--fs-2);
+    line-height: 1.5;
+    color: var(--text-3);
+}
+
+/* ==========================
+   Служебное
+   ========================== */
+[hidden] { display: none !important; }
+
+/* Уважаем системную настройку «меньше движения»: у части людей анимация
+   интерфейса вызывает укачивание, и Telegram эту настройку прокидывает. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+        scroll-behavior: auto !important;
+    }
+}

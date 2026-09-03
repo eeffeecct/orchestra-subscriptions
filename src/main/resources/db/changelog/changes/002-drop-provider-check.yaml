@@ -1,0 +1,20 @@
+# Удаление stale check constraint на payments.provider.
+#
+# Когда Hibernate с ddl-auto=update создавал колонку provider в enum'е (YOOKASSA, CRYPTOBOT),
+# он повесил check constraint, перечисляющий только эти два значения. При добавлении STARS
+# в enum Hibernate этот constraint НЕ обновил — такова ограниченность update-режима.
+# В результате INSERT с provider=STARS падал на Postgres-уровне.
+#
+# Валидация допустимых значений теперь целиком на Java-слое через @Enumerated(EnumType.STRING);
+# база не должна дублировать эту логику хардкодом, который не синхронизирован с кодом.
+#
+# Идемпотентно (IF EXISTS) — если constraint уже дропнут вручную на prod, changeset
+# ничего не сломает. На чистой БД (created из baseline) constraint и не создаётся.
+databaseChangeLog:
+  - changeSet:
+      id: 002-drop-provider-check
+      author: eeffeecct
+      changes:
+        - sql:
+            sql: ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_provider_check
+            dbms: postgresql

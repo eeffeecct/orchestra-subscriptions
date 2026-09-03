@@ -1,0 +1,33 @@
+# Добавляем поля для обработки возвратов в payments.
+#
+# Когда приходит webhook refund.succeeded от YooKassa, мы:
+#   1) помечаем платёж как REFUNDED (новое значение в enum Payment.Status),
+#   2) записываем refunded_at = момент возврата (audit trail),
+#   3) записываем refund_amount_kopeks = фактически возвращённая сумма.
+#
+# refund_amount_kopeks может быть меньше payment.amount_kopeks (частичный возврат),
+# но в v1 мы пока обрабатываем только полные возвраты. Храним поле чтобы не пришлось
+# позже делать миграцию при поддержке partial refund.
+#
+# Существующие строки в payments (до миграции) остаются с NULL — и статус у них
+# не REFUNDED, так что ни одна логика их не затронет.
+databaseChangeLog:
+  - changeSet:
+      id: 005-add-refund-columns
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: payments
+                columnName: refunded_at
+      changes:
+        - addColumn:
+            tableName: payments
+            columns:
+              - column:
+                  name: refunded_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+              - column:
+                  name: refund_amount_kopeks
+                  type: BIGINT

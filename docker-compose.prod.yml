@@ -1,0 +1,60 @@
+# Боевой compose: образ тянется из реестра, база — рядом на том же хосте.
+# Значения берутся из .env (см. .env.example) — реальных значений в репозитории нет.
+services:
+  postgres:
+    image: postgres:16
+    container_name: subscriptions-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+    ports:
+      # Только loopback: без адреса Docker вешает порт на 0.0.0.0 и пробивает дырку
+      # в firewall — локальная база оказывается видна из сети.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: ghcr.io/OWNER/REPO:latest
+    container_name: subscriptions-app
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${DB_NAME}
+      SPRING_DATASOURCE_USERNAME: ${DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASS}
+    # Горячий конфиг (app-dynamic.yml). Путь дефолтится в application.yml, и БЕЗ этого
+    # монтирования контейнер файла не видит.
+    #
+    # ⚠️ Монтирование обязательно, и вот почему: DynamicConfigService.applyVolatileFields
+    # перекрывает горячий ключ, только если тот non-null во внешнем файле. Нет файла (или нет
+    # ключа) → молча выигрывают ЗАПЕЧЁННЫЕ значения из application.yml. То есть потеря этого
+    # блока — не «сломается», а «тихо раздадим не тот список узлов». В логе старта это видно
+    # строкой «Dynamic config: применён внешний файл … на старте»; противоположная строка
+    # «внешний файл не задан/не найден» = авария.
+    # :ro — приложение конфиг только читает.
+    volumes:
+      - /opt/subscription-service/config:/opt/subscription-service/config:ro
+    # Ротация логов контейнера: своего logback-конфига в проекте нет, поэтому всё уходит
+    # в stdout и драйвер json-file пишет файл без ограничения размера. Диск общий с Postgres —
+    # переполнение положило бы и базу. Потолок 250 МБ.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -1,0 +1,40 @@
+# Добавление email в customers — фундамент Phase 2:
+# email-capture в Mini App, magic-link авторизация в web-ЛК,
+# резервная копия параметров доступа при продлении.
+#
+# email — VARCHAR(255), nullable: на момент миграции ни у кого email'а нет,
+# и сбор будет opt-in через capture-баннер. UNIQUE — для magic-link нужно
+# однозначно резолвить юзера по адресу. Postgres допускает множественные NULL
+# в UNIQUE-колонке, так что constraint безопасен пока юзеры email не ввели.
+#
+# email_verified_at — момент подтверждения через magic-link клик. NULL =
+# юзер ввёл email в capture, но кликом по письму ещё не подтвердил. Различие
+# важно для логики «слать важное только на подтверждённый адрес» (152-ФЗ +
+# антиспам-репутация SMTP-провайдера).
+#
+# Идемпотентность: на прод-БД (где Hibernate validate уже зафиксировал схему
+# и колонок ещё нет) — миграция применится. На повторный запуск / уже
+# применённой колонке — MARK_RAN через NOT columnExists.
+databaseChangeLog:
+  - changeSet:
+      id: 015-add-email-to-customers
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: customers
+                columnName: email
+      changes:
+        - addColumn:
+            tableName: customers
+            columns:
+              - column:
+                  name: email
+                  type: VARCHAR(255)
+                  constraints:
+                    unique: true
+                    uniqueConstraintName: uk_customers_email
+              - column:
+                  name: email_verified_at
+                  type: TIMESTAMP WITHOUT TIME ZONE

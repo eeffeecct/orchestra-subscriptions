@@ -1,0 +1,53 @@
+# Добавляем колонки для автопродления в customers.
+#
+# autorenew_method_id — YooKassa payment_method.id из save_payment_method=true invoice.
+# autorenew_enabled   — пользовательский toggle (ВКЛ/ВЫКЛ). Независим от method_id:
+#                       юзер может выключить автопродление, а потом включить без перевыпуска карты.
+# autorenew_plan_id   — id тарифа, который будет автосписан (последний купленный через
+#                       "оплатить с автопродлением").
+# autorenew_last_failure_at — момент неудачного списания. Используется для one-shot
+#                       политики: если последний failure был < 25h назад, пропускаем —
+#                       чтобы не ретраить одно и то же истечение в течение одного
+#                       "окна" планировщика (24-25h до expiry).
+#
+# Автопродление поддерживается только YooKassa. CryptoBot и Telegram Stars технически
+# не умеют merchant-initiated charges — эти колонки для них всегда NULL/FALSE.
+databaseChangeLog:
+  - changeSet:
+      id: 004-add-autorenew-columns
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - columnExists:
+                tableName: customers
+                columnName: autorenew_enabled
+      changes:
+        - addColumn:
+            tableName: customers
+            columns:
+              - column:
+                  name: autorenew_method_id
+                  type: VARCHAR(255)
+              - column:
+                  name: autorenew_enabled
+                  type: BOOLEAN
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
+              - column:
+                  name: autorenew_plan_id
+                  type: VARCHAR(255)
+              - column:
+                  name: autorenew_last_failure_at
+                  type: TIMESTAMP WITHOUT TIME ZONE
+        # Частичный индекс для планировщика: только строки, по которым вообще может быть
+        # автосписание. На production БД обычно < 1000 таких строк, даже при сотнях тысяч юзеров.
+        - createIndex:
+            tableName: customers
+            indexName: idx_customers_autorenew_pickup
+            columns:
+              - column:
+                  name: expires_at
+              - column:
+                  name: autorenew_enabled

@@ -1,0 +1,87 @@
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+  # Spring MailSenderAutoConfiguration создаёт JavaMailSender bean только при наличии
+  # spring.mail.host. Значение тут — заглушка: app.email.enabled по умолчанию false,
+  # реальной отправки в тестах не происходит. Без этой строки EmailService (добавлен в #81)
+  # не сможет инжектнуть JavaMailSender → ApplicationContext падает → все @SpringBootTest
+  # краснеют (Errors: 191, см. историю CI пост-#81).
+  mail:
+    host: localhost
+  # Бота в тестах не регистрируем и не поллим: исключаем автоконфиг long-polling стартера
+  # (в 9.x он сам поднимает long polling для SpringLongPollingBot-бинов). Раньше эту роль
+  # играл @MockBean TelegramBotsApi, которого в 9.x больше нет.
+  autoconfigure:
+    exclude: org.telegram.telegrambots.longpolling.starter.TelegramBotStarterConfiguration
+
+app:
+  # В тестах отключаем фоновой scheduling, чтобы @Scheduled не фирился одновременно
+  # с ручными вызовами runOnce()/processExpiredSubscriptions() и не давал flaky
+  # "wanted 1 time, was 2 times" из-за race condition.
+  scheduler:
+    autorenew-enabled: false
+    expiry-enabled: false
+    reconcile-enabled: false
+    # Чистка по срокам хранения (RetentionCleanupService): удаление по времени, тикающее
+    # посреди suite'а, выносит из-под тестов строки устройств и грантов. Выключаем здесь
+    # централизованно — по тем же соображениям, что и sync-enabled ниже.
+    retention-cleanup-enabled: false
+
+  # SubscriptionSyncReconciler живёт на СВОЁМ флаге (app.subscriptions.sync-enabled,
+  # дефолт true), а не под app.scheduler.* — поэтому он тикал раз в минуту во всех
+  # suite'ах и на выключении контекста бился о закрытый пул, засыпая лог пачкой
+  # DataAccessResourceFailureException. Пять классов уже глушили его своим
+  # @TestPropertySource — выносим сюда, чтобы не помнить об этом в каждом новом тесте.
+  #
+  # NB: висящий на выключении форк («Surefire is going to kill self fork JVM», +30 с)
+  # этим НЕ лечится — проверено прогоном, сообщение остаётся. Его держит что-то другое,
+  # не этот реконсилер; отдельная задача, на результат тестов не влияет.
+  subscriptions:
+    sync-enabled: false
+
+  # Несколько подписок выключены ЯВНО: существующие suite'ы должны идти по той же ветке,
+  # что и прод, и не зависеть от того, каким останется дефолт в коде.
+  multi-subscription:
+    enabled: false
+    allowed-telegram-ids: []
+
+  provider:
+    base-url: http://localhost:9999
+    subscription-url-prefix: https://test.example.com
+    username: test
+    password: test
+  telegram:
+    bot-token: 0000000000:test_token_for_tests_only
+    bot-username: test_bot
+    guide-url: https://telegra.ph/test
+    owner-id: 999999999
+  yookassa:
+    shop-id: test_shop
+    secret-key: test_secret
+    return-url: https://t.me/test_bot
+    # В тестах автопродление включено — чтобы AutoRenewServiceIntegrationTest работал.
+    recurrent-enabled: true
+  plans:
+    - id: month_1
+      name: "1 месяц"
+      days: 30
+      price-kopeks: 15000
+      description: "Orchestra — 1 месяц"
+    - id: month_3
+      name: "3 месяца"
+      days: 90
+      price-kopeks: 40000
+      description: "Orchestra — 3 месяца"
+    - id: month_6
+      name: "6 месяцев"
+      days: 180
+      price-kopeks: 70000
+      description: "Orchestra — 6 месяцев"
+    - id: month_12
+      name: "12 месяцев"
+      days: 360
+      price-kopeks: 120000
+      description: "Orchestra — 12 месяцев"

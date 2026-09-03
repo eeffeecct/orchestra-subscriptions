@@ -1,0 +1,336 @@
+spring:
+  application:
+    name: subscription-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5434/${DB_NAME}
+    username: ${DB_USER}
+    password: ${DB_PASS}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      # Схему ведёт Liquibase; Hibernate только сверяет соответствие entity ↔ таблицы.
+      ddl-auto: validate
+
+  liquibase:
+    change-log: classpath:/db/changelog/db.changelog-master.yaml
+
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_LOGIN:}
+    password: ${SMTP_PASSWORD:}
+    default-encoding: UTF-8
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
+      # ⚠️ Без этих трёх строк JavaMail ждёт ВЕЧНО. У всех HTTP-клиентов таймауты стоят
+      # в WebClientConfig, но почта идёт мимо WebClient и осталась бы единственным исходящим
+      # вызовом без потолка. Отправка письма стоит внутри транзакции обработки платежа:
+      # молчащий SMTP-узел держит блокировку строки платежа, и каждая повторная доставка
+      # вебхука встаёт в очередь за ней. Числа те же, что в WebClientConfig.
+      mail.smtp.connectiontimeout: 3000
+      mail.smtp.timeout: 10000
+      mail.smtp.writetimeout: 10000
+
+server:
+  port: 8080
+
+# ====== ACTUATOR / HEALTH ======
+# Наружу отдаём только health. Эндпоинт слушает на server.address (в проде — 127.0.0.1),
+# поэтому публично не доступен. show-details по умолчанию never — отдаётся лишь агрегат
+# UP/DOWN без раскрытия внутренностей.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true        # /actuator/health/liveness и /readiness
+  health:
+    # SMTP-пробу убираем: при EMAIL_ENABLED=false креды пустые, и индикатор давал бы ложный
+    # DOWN. Health отражает живость приложения, а не доступность почты.
+    mail:
+      enabled: false
+
+# ====== APP CONFIG ======
+app:
+  # Адреса собственных прокси/фронтов перед приложением — пропускаются при вычислении IP
+  # клиента из X-Forwarded-For (ClientIpResolver). Иначе весь трафик через фронт считается
+  # одним адресом и упирается в общий rate-limit.
+  trusted-proxy-ips: []
+
+  # Токен, которым узел-релей подписывает отчёты о живых соединениях
+  # (POST /api/internal/node-stats). Не задан — эндпоинт отвечает 404.
+  node-stats-token: ${NODE_STATS_TOKEN:}
+
+  # Имена для /online: порт входа на релее → узел, к которому он ведёт.
+  relay-inbound-names: {}
+
+  # Имена для /online: адрес узла (он сам приходит за авторизацией) → как показывать.
+  node-names: {}
+
+  # «Горячий» конфиг вне docker-образа: список узлов правится на сервере и применяется
+  # owner-командой /reloadconfig БЕЗ пересборки образа (см. DynamicConfigService).
+  # Файла нет (dev/local) → используются запечённые ниже значения app.servers.
+  dynamic-config-path: ${APP_DYNAMIC_CONFIG_PATH:/opt/subscription-service/config/app-dynamic.yml}
+
+  # Внешняя система, которая физически раздаёт доступ. В этом репозитории за интерфейсом
+  # AccessProvider стоит локальная реализация LocalAccessProvider: она выдаёт токен и не
+  # ходит наружу, поэтому base-url/username/password здесь — контракт для реализации
+  # поверх реального вендора, а не обязательные значения.
+  provider:
+    base-url: ${PROVIDER_BASE_URL:http://localhost:8000}
+    username: ${PROVIDER_USER:}
+    password: ${PROVIDER_PASS:}
+    # Префикс подписочных ссылок: <prefix>/sub/<token> — адрес, по которому клиентское
+    # приложение забирает параметры доступа (AccessDeliveryController).
+    subscription-url-prefix: ${PROVIDER_SUBSCRIPTION_URL_PREFIX:https://example.com}
+    # Общий лимит одновременных устройств; ступени тарифа перекрывают его своим значением.
+    device-limit: 5
+
+  telegram:
+    bot-token: ${BOT_TOKEN}
+    bot-username: ${BOT_USERNAME}
+    guide-url: ${GUIDE_URL:}
+    # Telegram ID владельца. Не задано — админ-команды заблокированы для всех.
+    owner-id: ${OWNER_TELEGRAM_ID:}
+    # URL публичной оферты. Не задан — /terms показывает, что оферта в подготовке.
+    offer-url: ${OFFER_URL:}
+    # Метка редакции оферты (обычно дата). Пишется в offer_acceptances.offer_revision
+    # при акцепте: сам offer-url редакцию не фиксирует. Менять ОДНОВРЕМЕННО с текстом.
+    offer-revision: ${OFFER_REVISION:}
+    # Публичный base URL бэкенда: из него строятся абсолютные ссылки на наши эндпоинты
+    # (выдача доступа, magic-link, веб-кабинет, returnUrl эквайринга). Дефолт синхронизирован
+    # с CORS-конфигом в WebAppCorsConfig.
+    public-base-url: ${BOT_PUBLIC_BASE_URL:https://example.com}
+    # Base URL ТОЛЬКО для кнопок открытия Mini App. Отдельно от public-base-url — чтобы
+    # увести Mini App на другой домен, не трогая выдачу доступа, кабинет и magic-link.
+    # Пусто — фолбэк на public-base-url.
+    mini-app-base-url: ${MINI_APP_BASE_URL:}
+    # file_id ролика «как подключиться» для экрана помощи. Пусто — экран без видео.
+    # Не путь к файлу: Telegram хранит залитое видео у себя, бот шлёт его по идентификатору.
+    how-to-video-id: ${HOW_TO_VIDEO_ID:}
+    # Канал с новостями сервиса.
+    news-channel-url: ${NEWS_CHANNEL_URL:}
+    # Канал, подписка на который ОБЯЗАТЕЛЬНА для входа в бот (@username или числовой -100…).
+    # Пусто — гейт выключен.
+    # ⚠️ Бот обязан быть АДМИНИСТРАТОРОМ этого канала: getChatMember по каналу Bot API отдаёт
+    # только админу. Нет прав — проверка падает и пропускает всех (fail-open), в логах
+    # «Channel membership check failed». Состояние гейта видно на старте по строке «Channel gate».
+    # ⚠️ НЕ входит в горячий набор /reloadconfig — смена требует рестарта.
+    required-channel: ${REQUIRED_CHANNEL:}
+    # Ссылка кнопки «Подписаться». Пусто — выводится из required-channel (@name → t.me/name).
+    # Задавать вручную только для закрытого канала: туда ведёт invite-ссылка.
+    required-channel-url: ${REQUIRED_CHANNEL_URL:}
+    # Контакт поддержки для экрана «Поддержка». Пусто — кнопка скрыта.
+    support-url: ${SUPPORT_URL:}
+
+  # Несколько подписок на человека. Выключено: пока флаги выключены, все каналы зачисляют
+  # оплату в текущую подписку.
+  #
+  # ⚠️ НЕ входит в горячий набор /reloadconfig: money-path не должен меняться командой в чате.
+  # Смена — правка конфига + рестарт. Читается ровно одним классом — MultiSubscriptionPolicy.
+  multi-subscription:
+    # Разрешено ли СОЗДАВАТЬ вторую подписку. На активацию уже принятых денег не влияет
+    # никогда: выключение флага не должно запирать оплаченный, но не активированный платёж.
+    enabled: false
+    # Кому разрешено. Пусто = никому, даже при enabled: true.
+    allowed-telegram-ids: []
+    # Открыть ВСЕМ, минуя список. Отдельный флаг, а не «пустой список = все»: пустой список
+    # значит «никому», и переворачивать смысл существующей настройки нельзя — затёртая
+    # переменная молча открыла бы money-path всему свету. enabled: false перекрывает и его.
+    allow-all: false
+    # Аварийный тормоз на переключение подписок. Кнопку не прячет — отвечает «временно
+    # недоступно»: молча убирать её у человека с замороженными деньгами нельзя.
+    switching-enabled: true
+    max-per-user: 2
+    max-switches-per-day: 10
+
+  yookassa:
+    shop-id: ${YOOKASSA_SHOP_ID}
+    secret-key: ${YOOKASSA_SECRET_KEY}
+    return-url: ${YOOKASSA_RETURN_URL}
+    # Автоплатежи (save_payment_method) включаются отдельной заявкой в поддержку эквайринга.
+    # false = скрываем UI автопродления, планировщик спит. Поднять в true после одобрения.
+    recurrent-enabled: ${YOOKASSA_RECURRENT_ENABLED:false}
+    # HTTP-прокси до API эквайринга. Пусто = напрямую, это обычный режим.
+    proxy-host: ${YOOKASSA_PROXY_HOST:}
+    proxy-port: ${YOOKASSA_PROXY_PORT:3128}
+
+  cryptobot:
+    base-url: ${CRYPTOBOT_BASE_URL:https://pay.crypt.bot/api/}
+    token: ${CRYPTOBOT_TOKEN:}
+    accepted-assets: ${CRYPTOBOT_ASSETS:USDT,TON,BTC,ETH}
+    paid-btn-url: ${CRYPTOBOT_PAID_BTN_URL:}
+
+  # Email-фичи (вход по magic-link, копия параметров доступа, уведомления).
+  # См. также spring.mail.* выше. enabled=false (дефолт) — EmailService логирует «would send»,
+  # но реально не шлёт: безопасно для локального запуска и тестов.
+  email:
+    # Отправитель. Должен совпадать с доменом, подтверждённым у SMTP-провайдера
+    # (DKIM + SPF + DMARC в DNS). При смене провайдера менять и DKIM-запись.
+    from: ${EMAIL_FROM:noreply@example.com}
+    enabled: ${EMAIL_ENABLED:false}
+
+  # Анимированные Telegram-эмодзи (custom emoji) в сообщениях бота. Работают ТОЛЬКО если у
+  # аккаунта-ВЛАДЕЛЬЦА бота есть Telegram Premium. enabled=false → везде обычные эмодзи.
+  # Чтобы «оживить»: EMOJI_ENABLED=true и заполнить ids (semantic-ключ → custom_emoji_id).
+  # id значка узнаётся owner-командой /emojiid. Ключи — см. util/Emoji.java.
+  emoji:
+    enabled: ${EMOJI_ENABLED:false}
+    ids: {}
+
+  # Базовая цена плана = ступень «2 устройства» (d2, ×1.0 — самый частый случай: ПК + телефон).
+  plans:
+    - id: month_1
+      name: "1 месяц"
+      days: 30
+      price-kopeks: 17900
+      # 179₽ × 1.4 ≈ 251₽; 1 Star ≈ 1.17₽ → 215 Stars. Нетто после 30% комиссии ≈ 150₽.
+      price-stars: 215
+      description: "Orchestra — 1 месяц"
+    - id: month_3
+      name: "3 месяца"
+      days: 90
+      price-kopeks: 48000
+      # Скидка ≈11% против 3 × месячный (537₽), 160₽/мес.
+      price-stars: 575
+      description: "Orchestra — 3 месяца"
+    - id: month_6
+      name: "6 месяцев"
+      days: 180
+      price-kopeks: 84000
+      # Скидка ≈22% против 6 × месячный (1074₽), 140₽/мес.
+      price-stars: 1005
+      description: "Orchestra — 6 месяцев"
+      popular: true   # бейдж «Популярный» в витрине Mini App (middle-tier bias)
+    - id: month_12
+      name: "12 месяцев"
+      days: 360
+      price-kopeks: 144000
+      # Скидка ≈33% против 12 × месячный (2148₽), 120₽/мес.
+      price-stars: 1725
+      description: "Orchestra — 12 месяцев"
+
+  # Ступени тарифа по числу устройств. База (×1.0) — «2 устройства».
+  # Итоговая цена = цена плана × price-multiplier: множитель 1.0 отдаёт цену плана как есть
+  # (179 не превращается в 180), остальные округляются до 5 ₽ (AppConfig.tierPriceKopeks);
+  # Stars выводятся пропорционально через StarsAmount.compute — задавать отдельно не нужно.
+  # Матрица цен при текущих множителях:
+  #                1 мес   3 мес   6 мес   12 мес
+  #   1 устройство  100     265     465      800
+  #   2 устройства  179     480     840     1440   ← базовая (popular)
+  #   3 устройства  215     575    1010     1730
+  #   Семейная ×5   320     865    1510     2590
+  #   Семейная ×10  500    1345    2350     4030
+  # devices = сколько слотов устройств даёт ступень (device_limit после оплаты).
+  # provider-device-limit можно задать явно; дефолт devices+1. Пустой список = фича
+  # выключена (продажа планов без ступеней). Как и app.plans, НЕ входит в /reloadconfig.
+  device-tiers:
+    - id: d1
+      name: "1 устройство"
+      devices: 1
+      price-multiplier: 0.555
+    - id: d2
+      name: "2 устройства"
+      devices: 2
+      price-multiplier: 1.0
+      popular: true
+    - id: d3
+      name: "3 устройства"
+      devices: 3
+      price-multiplier: 1.2
+    - id: f5
+      name: "Семейная · до 5 устройств"
+      devices: 5
+      family: true
+      price-multiplier: 1.8
+    - id: f10
+      name: "Семейная+ · до 10 устройств"
+      devices: 10
+      family: true
+      price-multiplier: 2.8
+
+  # Докупка «+1 устройство» к активной подписке: pro-rata до конца оплаченного срока
+  # (39₽ за 30 дней → на 300 оставшихся дней = 390₽). При продлении лимит выставляется заново
+  # из ступени — докупленные слоты сгорают (об этом написано в UI). Доступна только тем, у
+  # кого выбрана ступень. price-kopeks-per-month: 0 = фича выключена.
+  device-addon:
+    price-kopeks-per-month: 3900
+    price-stars-per-month: 47
+    max-extra-devices: 5
+
+  # Лимиты устройств вне покупки. trial-device-limit назначается новым триалам (0 = без
+  # лимита); default-device-limit — для подписчиков без записанного device_limit (купили до
+  # появления фичи): 0 = не ограничивать их. Устройство, не обновлявшее подписку
+  # device-inactivity-days дней, слот не занимает.
+  trial-device-limit: 1
+  default-device-limit: 0
+  device-inactivity-days: 30
+  # Owner-алерт «на подписке ≥ N разных устройств» (перепродажа/утечка ссылки). 0 = выключен.
+  device-anomaly-threshold: 10
+
+  # Сроки хранения. Обе чистки выполняет RetentionCleanupService раз в сутки (04:47 и 04:48);
+  # выключается флагом app.scheduler.retention-cleanup-enabled: false.
+  retention:
+    # Отпечатки устройств (user_devices): строку удаляем, если last_seen_at старше N дней.
+    # ⚠️ Значение обязано быть заметно БОЛЬШЕ device-inactivity-days (30): пока строка внутри
+    # окна активности, она занимает слот и участвует в лимите устройств, и её удаление
+    # незаметно для человека отдало бы слот. При device-days <= device-inactivity-days чистка
+    # устройств не выполняется вовсе и пишет об этом WARN.
+    device-days: 180
+    # Отложенные подарки (pending_grants): сколько живёт невостребованный приз. По истечении
+    # он не срабатывает и удаляется чисткой. Срок применяется в момент выдачи — уже созданным
+    # грантам не пересчитывается.
+    pending-grant-days: 30
+
+  # Персональная авторизация подписчиков на узлах раздачи: узел на каждое подключение
+  # спрашивает /node/auth/<auth-path-secret>, а учётные данные выводятся из подписочного
+  # токена — <provider_username>.<HMAC(secret, username:sub_token)>. Что это даёт: смена
+  # ссылки подписки отзывает доступ на всех узлах разом, а истёкший подписчик с
+  # закешированным конфигом перестаёт проходить. Пустой auth-secret = фича выключена.
+  node-auth:
+    auth-secret: ${NODE_AUTH_SECRET:}
+    auth-path-secret: ${NODE_AUTH_PATH_SECRET:}
+
+  # Источник статуса узлов для экрана «Статус серверов» — публичная статус-страница
+  # Uptime Kuma. Экран обязан показывать то же, что мониторинг: своя TCP-проба врала
+  # структурно (у узлов на UDP пробе взяться неоткуда, и им ставился always-online —
+  # «Активен» без единой проверки).
+  status-page:
+    enabled: ${STATUS_PAGE_ENABLED:false}
+    base-url: ${STATUS_PAGE_URL:http://127.0.0.1:3001}
+    slug: ${STATUS_PAGE_SLUG:orchestra}
+    node-group: "Узлы сервиса"
+
+  # Инвентарь узлов. Статус берётся НЕ отсюда (см. status-page выше) — здесь остаётся
+  # перечень имён и адресов, в том числе запасной, когда мониторинг не ответил.
+  # Адреса из диапазона 203.0.113.0/24 (RFC 5737, TEST-NET-3) — плейсхолдеры.
+  servers:
+    - name: "Регион A"
+      flag: "🇪🇺"
+      host: "203.0.113.10"
+      port: 443
+    - name: "Регион B"
+      flag: "🇪🇺"
+      host: "203.0.113.11"
+      port: 443
+    - name: "Регион C"
+      flag: "🌍"
+      host: "203.0.113.12"
+      port: 443
+
+  # Периодические задачи. Каждый флаг гасит свою задачу независимо — на случай, когда одна
+  # из них мешает разбирать инцидент, а остальные должны продолжать работать.
+  scheduler:
+    expiry-enabled: ${SCHED_EXPIRY_ENABLED:true}
+    autorenew-enabled: ${SCHED_AUTORENEW_ENABLED:true}
+    reconcile-enabled: ${SCHED_RECONCILE_ENABLED:true}
+    parked-funds-reminder-enabled: ${SCHED_PARKED_REMINDER_ENABLED:true}
+    retention-cleanup-enabled: ${SCHED_RETENTION_ENABLED:true}

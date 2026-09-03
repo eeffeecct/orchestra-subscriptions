@@ -1,0 +1,22 @@
+# Удаление stale check constraint на payments.status.
+#
+# Hibernate с ddl-auto=update создал constraint перечисляющий только оригинальные значения
+# enum Payment.Status: (PENDING, SUCCEEDED, CANCELED, FAILED). Когда в 771db41 добавили
+# REFUNDED, constraint не обновился — такова ограниченность update-режима.
+#
+# В результате UPDATE payments SET status='REFUNDED' падает:
+#   new row for relation "payments" violates check constraint "payments_status_check"
+#
+# Так же, как с provider в 002-drop-provider-check.yaml: валидация допустимых значений
+# делается на Java-слое через @Enumerated(EnumType.STRING), база не должна дублировать.
+#
+# Идемпотентно (IF EXISTS) — если constraint уже дропнут вручную на prod или не создан
+# на чистой БД, changeset ничего не сломает.
+databaseChangeLog:
+  - changeSet:
+      id: 007-drop-status-check
+      author: eeffeecct
+      changes:
+        - sql:
+            sql: ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_status_check
+            dbms: postgresql

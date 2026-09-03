@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Orchestra — Админ-панель</title>
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="color-scheme" content="dark">
+    <!-- Те же три гарнитуры, что в Mini App: Golos Text — текст, Unbounded — цифры и
+         заголовки, JetBrains Mono — идентификаторы. Больше ничего внешнего страница не
+         грузит: CSP для /account/admin разрешает только self + fonts.g*.com. -->
+    <!-- Шрифты лежат у нас, а не на fonts.googleapis.com: иначе браузер каждого клиента
+         сам отдаёт Google свой IP и User-Agent, и Google приходится указывать в Политике
+         получателем данных. Плюс внешний домен бывает недоступен из российских сетей.
+         Путь под /app/ — единственный проксируемый фронтом, см. fonts.css. -->
+    <link rel="stylesheet" href="/app/fonts/fonts.css">
+    <link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+
+<div class="shell">
+
+    <!-- ================= Сайдбар ================= -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar__brand">
+            <span class="logo" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="logo__text">
+                <b>ORCHESTRA</b>
+                <em>админ-панель</em>
+            </span>
+            <button type="button" class="iconbtn sidebar__close" id="sidebar-close" aria-label="Закрыть меню">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <path d="M18 6 6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Пункты рисует script.js: там же лежит и разбивка по группам. -->
+        <nav class="sidebar__nav" id="tabs" aria-label="Разделы панели"></nav>
+
+        <div class="sidebar__foot">
+            <div class="clock">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+                </svg>
+                <div>
+                    <div class="clock__val" id="clock">—</div>
+                    <div class="clock__zone">МСК</div>
+                </div>
+            </div>
+            <div class="whoami">
+                <span class="whoami__avatar" aria-hidden="true">OR</span>
+                <span class="whoami__text">
+                    <b>Владелец</b>
+                    <span>полный доступ</span>
+                </span>
+                <button type="button" class="iconbtn iconbtn--danger" id="logout-btn" title="Выйти" aria-label="Выйти">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <div class="scrim" id="scrim" hidden></div>
+
+    <!-- ================= Рабочая область ================= -->
+    <main class="main">
+        <header class="topbar">
+            <button type="button" class="iconbtn topbar__burger" id="burger" aria-label="Меню разделов">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <path d="M3 6h18M3 12h18M3 18h18"/>
+                </svg>
+            </button>
+            <div class="topbar__title">
+                <h1 id="view-title">Обзор</h1>
+                <span class="topbar__stamp" id="stamp">—</span>
+            </div>
+            <div class="topbar__actions">
+                <button type="button" class="btn-ghost" id="refresh-btn" title="Перечитать текущий раздел">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+                    </svg>
+                    Обновить
+                </button>
+            </div>
+        </header>
+
+        <div class="content">
+
+            <!-- ================= Обзор ================= -->
+            <section class="view" id="view-overview" hidden>
+                <div class="cards" id="overview-kpi"></div>
+
+                <div class="panel">
+                    <div class="panel__head">
+                        <h2>Деньги и удержание</h2>
+                        <p class="panel__note">Те же определения, что в командах бота <code>/stats</code> и <code>/metrics</code>.</p>
+                    </div>
+                    <div class="cards cards--tight" id="overview-money"></div>
+                </div>
+
+                <div class="split">
+                    <div class="panel">
+                        <div class="panel__head">
+                            <h2>Тарифы активных</h2>
+                            <p class="panel__note">Сколько активных платных подписок на каждом тарифе.</p>
+                        </div>
+                        <div class="minitable" id="overview-plans"></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel__head">
+                            <h2>Когорты</h2>
+                            <p class="panel__note">Доля от впервые оплативших в месяце, кто платит и сейчас.</p>
+                        </div>
+                        <div class="minitable" id="overview-cohorts"></div>
+                    </div>
+                </div>
+
+                <div class="split">
+                    <div class="panel">
+                        <div class="panel__head">
+                            <h2>Сейчас в сети</h2>
+                            <p class="panel__note">
+                                Подключения к узлам за последние 10 минут — единственный
+                                «прямо сейчас», который у нас есть: узел спрашивает у нас
+                                авторизацию на каждом коннекте. Хранится в памяти, рестарт
+                                приложения обнуляет. Узлы, которые проверяют подписчиков сами,
+                                сюда не попадают.
+                            </p>
+                        </div>
+                        <div class="minitable" id="overview-online"></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel__head">
+                            <h2>Узел-релей</h2>
+                            <p class="panel__note">Соединения по портам релея, отчёт раз в минуту. Без имён.</p>
+                        </div>
+                        <div class="minitable" id="overview-relay"></div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel__head">
+                        <h2>Таблицы базы</h2>
+                        <p class="panel__note">Число строк в каждой таблице на момент запроса.</p>
+                    </div>
+                    <div class="minitable" id="overview-tables"></div>
+                </div>
+            </section>
+
+            <!-- ================= Ноды ================= -->
+            <section class="view" id="view-nodes" hidden>
+                <div class="cards" id="nodes-kpi"></div>
+
+                <div class="panel">
+                    <div class="panel__head">
+                        <h2>Узлы провайдера доступа</h2>
+                        <p class="panel__note">
+                            Статус глазами провайдера, прямая TCP-проба <code>:443</code> и версия
+                            ядра узла. Опрос идёт вживую при каждом открытии раздела, поэтому экран
+                            отвечает не мгновенно. Те же данные, что у команды <code>/nodes</code> в боте.
+                        </p>
+                    </div>
+                    <div class="nodegrid" id="nodes-list"></div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel__head">
+                        <h2>Мониторинг</h2>
+                        <p class="panel__note">
+                            Uptime Kuma: доля успешных проверок за сутки и задержка последней.
+                            Со списком выше построчно не сводится — общего ключа между именами нод
+                            в панели и именами мониторов нет, а склейка «по похожему имени» соврала бы
+                            на первой же переименованной ноде.
+                        </p>
+                    </div>
+                    <div class="minitable" id="nodes-monitors"></div>
+                </div>
+            </section>
+
+            <!-- ================= Таблицы ================= -->
+            <section class="view" id="view-table" hidden>
+                <div class="toolbar">
+                    <input type="search" class="toolbar__search" id="search" placeholder="Поиск" autocomplete="off" spellcheck="false" hidden>
+                    <div class="toolbar__filters" id="filters"></div>
+                    <div class="toolbar__spacer"></div>
+                    <span class="toolbar__count" id="count">—</span>
+                    <a class="btn-ghost" id="export-btn" download>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>
+                        </svg>
+                        CSV
+                    </a>
+                </div>
+
+                <p class="hint" id="table-hint" hidden></p>
+
+                <div class="tablewrap">
+                    <table class="grid" id="grid">
+                        <thead><tr id="grid-head"></tr></thead>
+                        <tbody id="grid-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="pager">
+                    <button type="button" class="btn-ghost" id="prev-btn">← Назад</button>
+                    <span id="pageinfo">—</span>
+                    <button type="button" class="btn-ghost" id="next-btn">Вперёд →</button>
+                </div>
+            </section>
+
+            <div class="loading" id="loading">Загрузка…</div>
+            <p class="error" id="error" hidden></p>
+
+        </div>
+    </main>
+</div>
+
+<!-- ================= Карточка человека ================= -->
+<div class="drawer" id="drawer" hidden>
+    <div class="drawer__backdrop" id="drawer-backdrop"></div>
+    <div class="drawer__panel" role="dialog" aria-modal="true" aria-label="Карточка пользователя">
+        <div class="drawer__head">
+            <div>
+                <div class="drawer__title" id="card-title">—</div>
+                <div class="drawer__sub" id="card-sub">—</div>
+            </div>
+            <button type="button" class="iconbtn" id="drawer-close" aria-label="Закрыть карточку">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <path d="M18 6 6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <div class="drawer__body" id="card-body"></div>
+    </div>
+</div>
+
+<script src="script.js?v=3"></script>
+</body>
+</html>

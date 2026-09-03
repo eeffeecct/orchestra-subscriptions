@@ -1,0 +1,37 @@
+# Индексы под горячие запросы по payments.
+#
+# В 001-baseline у payments были только UNIQUE-индексы на *_payment_id / *_invoice_id /
+# *_charge_id. На telegram_id индекса не было ни в одном changeset, а по нему идут самые
+# частые запросы: findByTelegramIdOrderByCreatedAtDesc (/api/payments, admin-карточка),
+# countByTelegramIdAndStatus (каждый /api/me и /api/account/me), countByTelegramIdAndStatusIn /
+# existsByTelegramIdAndStatusIn (реф-награды, проверка trial), findTop20...refund-проверка.
+# Все они без индекса деградировали в seq scan по всей таблице платежей.
+#
+# Второй индекс (status, paid_at) покрывает /stats (findByStatusAndPaidAtAfter), reconcile
+# (findStaleYookassaPending фильтрует по status) и cohort-GROUP BY по SUCCEEDED.
+databaseChangeLog:
+  - changeSet:
+      id: 021-add-payments-indexes
+      author: eeffeecct
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - indexExists:
+                indexName: idx_payments_telegram_id_created
+      changes:
+        - createIndex:
+            tableName: payments
+            indexName: idx_payments_telegram_id_created
+            columns:
+              - column:
+                  name: telegram_id
+              - column:
+                  name: created_at
+        - createIndex:
+            tableName: payments
+            indexName: idx_payments_status_paid_at
+            columns:
+              - column:
+                  name: status
+              - column:
+                  name: paid_at
